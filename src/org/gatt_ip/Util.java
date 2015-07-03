@@ -1,15 +1,5 @@
 package org.gatt_ip;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.ListIterator;
-import java.util.Locale;
-import java.util.UUID;
-
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
@@ -17,6 +7,19 @@ import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.ListIterator;
+import java.util.Locale;
+import java.util.UUID;
+import java.math.BigInteger;
+import java.math.BigDecimal;
 
 public class Util {
     
@@ -192,8 +195,9 @@ public class Util {
         while (iterator.hasNext()) {
             JSONObject jsonObj = new JSONObject();
             BluetoothGattDescriptor descriptor = iterator.next();
+            String descriptorUUIDString = descriptor.getUuid().toString().toUpperCase(Locale.getDefault());
             try {
-                jsonObj.put(Constants.kDescriptorUUID,descriptor.getUuid().toString());
+                jsonObj.put(Constants.kDescriptorUUID,descriptorUUIDString);
                 jsonList.add(jsonObj);
             } catch (JSONException e) {
                 e.printStackTrace();
@@ -201,6 +205,65 @@ public class Util {
         }
         return jsonList;
     }
+
+    public static List<String> listOfServiceUUIDStringsFrom(JSONArray listOfServiceUUIDStrings) {
+
+        List<String> listOfServcieUUIDs = new ArrayList<String>();
+        for(int i = 0; i < listOfServiceUUIDStrings.length(); i++) {
+            try {
+                listOfServcieUUIDs.add(listOfServiceUUIDStrings.getString(i));
+            } catch (JSONException je) {
+                je.printStackTrace();
+            }
+        }
+        return listOfServcieUUIDs;
+    }
+
+    public static List<BluetoothGatt> retrieveConnectedPeripheralsWithServices(ArrayList<BluetoothGatt> mConnectedDevices, List<String> listOfServcieUUIDStrings) {
+
+        List<BluetoothGatt> peripheralsWithServcies = new ArrayList<>();
+        for(int i = 0; i < mConnectedDevices.size(); i++) {
+            BluetoothGatt gatt = mConnectedDevices.get(i);
+            List<BluetoothGattService> servcies = gatt.getServices();
+            for(int j = 0; j < servcies.size(); j++) {
+                BluetoothGattService servcie = servcies.get(i);
+                for(String servcieUUIDString : listOfServcieUUIDStrings) {
+                    if(servcie.getUuid().toString().equals(servcieUUIDString)) {
+                        peripheralsWithServcies.add(gatt);
+                    }
+                }
+            }
+        }
+        return  peripheralsWithServcies;
+    }
+
+    public static List<String> listOfPeripheralUUIDStringsFrom(JSONArray listOfPeripherUUIDStrings) {
+
+        List<String> listOfPeripheralUUIDs = new ArrayList<String>();
+        for(int i = 0; i < listOfPeripherUUIDStrings.length(); i++) {
+            try {
+                listOfPeripheralUUIDs.add(listOfPeripherUUIDStrings.getString(i));
+            } catch (JSONException je) {
+                je.printStackTrace();
+            }
+        }
+        return listOfPeripheralUUIDs;
+    }
+
+    public static List<BluetoothGatt> retrievePeripheralsWithIdentifiers(ArrayList<BluetoothGatt> mConnectedDevices, List<String> listOfperipheralUUIDStrings) {
+        List<BluetoothGatt> peripheralsWithIdentifiers = new ArrayList<>();
+        for(int i = 0; i < mConnectedDevices.size(); i++) {
+            BluetoothGatt gatt = mConnectedDevices.get(i);
+            BluetoothDevice device = gatt.getDevice();
+            for(String address : listOfperipheralUUIDStrings) {
+                if(address.equals(device.getAddress())) {
+                    peripheralsWithIdentifiers.add(gatt);
+                }
+            }
+        }
+        return peripheralsWithIdentifiers;
+    }
+
     public static String centralStateStringFromCentralState(int centralState)
     {
         switch(centralState)
@@ -213,19 +276,31 @@ public class Util {
                 return "";
         }
     }
-    
+
+    public static String writeTypeForCharacteristicGiven(String writeType)
+    {
+
+        if(writeType.equals(Constants.kWriteWithoutResponse))
+             return Constants.kWriteWithoutResponse;
+        else
+            return Constants.kWriteWithResponse;
+    }
+
     public static String byteArrayToHex(byte[] data)
     {
-        final StringBuilder hexStr = new StringBuilder(data.length);
+        String hex = "";
         if (data != null && data.length > 0) {
+            final StringBuilder hexStr = new StringBuilder(data.length);
             for (byte byteChar : data)
-                hexStr.append(String.format("%X", byteChar));
+                hexStr.append(String.format("%02X", byteChar));
+            hex = new String(hexStr);
         }
-        return new String(hexStr);
+        return hex;
     }
-    
+
     public static byte[] hexStringToByteArray(String hex)
     {
+        hex = hex.replaceAll("\\s","");
         int len = hex.length();
         byte[] data = new byte[len / 2];
         for (int i = 0; i < len; i += 2) {
@@ -233,88 +308,91 @@ public class Util {
         }
         return data;
     }
-    
+
     public static String humanReadableFormatFromHex(String hexString)
     {
         HashMap<String, String> methods = new HashMap<String, String>();
-        methods.put("aa", "Configure");
-        methods.put("ab", "ScanForPeripherals");
-        methods.put("ac", "StopScanning");
-        methods.put("ad", "Connect");
-        methods.put("ae", "Disconnect");
-        methods.put("af", "CentralState");
-        methods.put("ag", "GetConnectedPeripherals");
-        methods.put("ah", "GetPerhipheralsWithServices");
-        methods.put("ai", "GetPerhipheralsWithIdentifiers");
-        methods.put("ak", "GetServices");
-        methods.put("al", "GetIncludedServices");
-        methods.put("am", "GetCharacteristics");
-        methods.put("an", "GetDescriptors");
-        methods.put("ao", "GetCharacteristicValue");
-        methods.put("ap", "GetDescriptorValue");
-        methods.put("aq", "WriteCharacteristicValue");
-        methods.put("ar", "WriteDescriptorValue");
-        methods.put("as", "SetValueNotification");
-        methods.put("at", "GetPeripheralState");
-        methods.put("au", "GetRSSI");
-        methods.put("av", "InvalidatedServices");
-        methods.put("aw", "peripheralNameUpdate");
-        
+        methods.put(Constants.kConfigure, "Configure");
+        methods.put(Constants.kScanForPeripherals, "ScanForPeripherals");
+        methods.put(Constants.kStopScanning, "StopScanning");
+        methods.put(Constants.kConnect, "Connect");
+        methods.put(Constants.kDisconnect, "Disconnect");
+        methods.put(Constants.kCentralState, "CentralState");
+        methods.put(Constants.kGetConnectedPeripherals, "GetConnectedPeripherals");
+        methods.put(Constants.kGetPerhipheralsWithServices, "GetPerhipheralsWithServices");
+        methods.put(Constants.kGetPerhipheralsWithIdentifiers, "GetPerhipheralsWithIdentifiers");
+        methods.put(Constants.kGetServices, "GetServices");
+        methods.put(Constants.kGetIncludedServices, "GetIncludedServices");
+        methods.put(Constants.kGetCharacteristics, "GetCharacteristics");
+        methods.put(Constants.kGetDescriptors, "GetDescriptors");
+        methods.put(Constants.kGetCharacteristicValue, "GetCharacteristicValue");
+        methods.put(Constants.kGetDescriptorValue, "GetDescriptorValue");
+        methods.put(Constants.kWriteCharacteristicValue, "WriteCharacteristicValue");
+        methods.put(Constants.kWriteDescriptorValue, "WriteDescriptorValue");
+        methods.put(Constants.kSetValueNotification, "SetValueNotification");
+        methods.put(Constants.kGetPeripheralState, "GetPeripheralState");
+        methods.put(Constants.kGetRSSI, "GetRSSI");
+        methods.put(Constants.kInvalidatedServices, "InvalidatedServices");
+        methods.put(Constants.kPeripheralNameUpdate, "peripheralNameUpdate");
+
         HashMap<String, String> keys = new HashMap<String, String>();
-        keys.put("ba", "centralUUID");
-        keys.put("bb", "peripheralUUID");
-        keys.put("bc", "PeripheralName");
-        keys.put("bd", "PeripheralUUIDs");
-        keys.put("be", "ServiceUUID");
-        keys.put("bf", "ServiceUUIDs");
-        keys.put("bg", "peripherals");
-        keys.put("bh", "IncludedServiceUUIDs");
-        keys.put("bi", "CharacteristicUUID");
-        keys.put("bj", "CharacteristicUUIDs");
-        keys.put("bk", "DescriptorUUID");
-        keys.put("bl", "Services");
-        keys.put("bm", "Characteristics");
-        keys.put("bn", "Descriptors");
-        keys.put("bo", "Properties");
-        keys.put("bp", "Value");
-        keys.put("bq", "State");
-        keys.put("br", "StateInfo");
-        keys.put("bs", "StateField");
-        keys.put("bt", "WriteType");
-        keys.put("bu", "RSSIkey");
-        keys.put("bv", "IsPrimaryKey");
-        keys.put("bw", "IsBroadcasted");
-        keys.put("bx", "IsNotifying");
-        keys.put("by", "ShowPowerAlert");
-        keys.put("bz", "IdentifierKey");
-        keys.put("b0", "ScanOptionAllowDuplicatesKey");
-        keys.put("b1", "ScanOptionSolicitedServiceUUIDs");
-        keys.put("b2", "AdvertisementDataKey");
-        keys.put("b3", "CBAdvertisementDataManufacturerDataKey");
-        keys.put("b4", "CBAdvertisementDataServiceUUIDsKey");
-        keys.put("b5", "CBAdvertisementDataServiceDataKey");
-        keys.put("b6", "CBAdvertisementDataOverflowServiceUUIDsKey");
-        keys.put("b7", "CBAdvertisementDataSolicitedServiceUUIDsKey");
-        keys.put("b8", "CBAdvertisementDataIsConnectable");
-        keys.put("b9", "CBAdvertisementDataTxPowerLevel");
-        keys.put("da", "CBCentralManagerRestoredStatePeripheralsKey");
-        keys.put("db", "CBCentralManagerRestoredStateScanServicesKey");
-        
+        keys.put(Constants.kCentralUUID, "centralUUID");
+        keys.put(Constants.kPeripheralUUID, "PeripheralUUID");
+        keys.put(Constants.kPeripheralName, "PeripheralName");
+        keys.put(Constants.kPeripheralUUIDs, "PeripheralUUIDs");
+        keys.put(Constants.kServiceUUID, "ServiceUUID");
+        keys.put(Constants.kServiceUUIDs, "ServiceUUIDs");
+        keys.put(Constants.kPeripherals, "peripherals");
+        keys.put(Constants.kIncludedServiceUUIDs, "IncludedServiceUUIDs");
+        keys.put(Constants.kCharacteristicUUID, "CharacteristicUUID");
+        keys.put(Constants.kCharacteristicUUIDs, "CharacteristicUUIDs");
+        keys.put(Constants.kDescriptorUUID, "DescriptorUUID");
+        keys.put(Constants.kServices, "Services");
+        keys.put(Constants.kCharacteristics, "Characteristics");
+        keys.put(Constants.kDescriptors, "Descriptors");
+        keys.put(Constants.kProperties, "Properties");
+        keys.put(Constants.kValue, "Value");
+        keys.put(Constants.kState, "State");
+        keys.put(Constants.kStateInfo, "StateInfo");
+        keys.put(Constants.kStateField, "StateField");
+        keys.put(Constants.kWriteType, "WriteType");
+        keys.put(Constants.kRSSIkey, "RSSIkey");
+        keys.put(Constants.kIsPrimaryKey, "IsPrimaryKey");
+        keys.put(Constants.kIsBroadcasted, "IsBroadcasted");
+        keys.put(Constants.kIsNotifying, "IsNotifying");
+        keys.put(Constants.kShowPowerAlert, "ShowPowerAlert");
+        keys.put(Constants.kIdentifierKey, "IdentifierKey");
+        keys.put(Constants.kScanOptionAllowDuplicatesKey, "ScanOptionAllowDuplicatesKey");
+        keys.put(Constants.kScanOptionSolicitedServiceUUIDs, "ScanOptionSolicitedServiceUUIDs");
+        keys.put(Constants.kAdvertisementDataKey, "AdvertisementDataKey");
+        keys.put(Constants.kCBAdvertisementDataManufacturerDataKey, "CBAdvertisementDataManufacturerDataKey");
+        keys.put(Constants.kCBAdvertisementDataServiceUUIDsKey, "CBAdvertisementDataServiceUUIDsKey");
+        keys.put(Constants.kCBAdvertisementDataServiceDataKey, "CBAdvertisementDataServiceDataKey");
+        keys.put(Constants.kCBAdvertisementDataOverflowServiceUUIDsKey, "CBAdvertisementDataOverflowServiceUUIDsKey");
+        keys.put(Constants.kCBAdvertisementDataSolicitedServiceUUIDsKey, "CBAdvertisementDataSolicitedServiceUUIDsKey");
+        keys.put(Constants.kCBAdvertisementDataIsConnectable, "CBAdvertisementDataIsConnectable");
+        keys.put(Constants.kCBAdvertisementDataTxPowerLevel, "CBAdvertisementDataTxPowerLevel");
+        keys.put(Constants.kCBCentralManagerRestoredStatePeripheralsKey, "CBCentralManagerRestoredStatePeripheralsKey");
+        keys.put(Constants.kCBCentralManagerRestoredStateScanServicesKey, "CBCentralManagerRestoredStateScanServicesKey");
+        keys.put(Constants.kPeripheralBtAddress, "BTAddress");
+        keys.put(Constants.kRawAdvertisementData, "RawAdvertisingdata");
+        keys.put(Constants.kScanRecord, "ScanRecord");
+
         HashMap<String, String> values = new HashMap<String, String>();
-        values.put("cc", "WriteWithResponse");
-        values.put("cd", "WriteWithoutResponse");
-        values.put("ce", "NotifyOnConnection");
-        values.put("cf", "NotifyOnDisconnection");
-        values.put("cg", "NotifyOnNotification");
-        values.put("ch", "Disconnected");
-        values.put("ci", "Connecting");
-        values.put("cj", "Connected");
-        values.put("ck", "Unknown");
-        values.put("cl", "Resetting");
-        values.put("cm", "Unsupported");
-        values.put("cn", "Unauthorized");
-        values.put("co", "PoweredOff");
-        values.put("cp", "PoweredOn");
+        values.put(Constants.kWriteWithResponse, "WriteWithResponse");
+        values.put(Constants.kWriteWithoutResponse, "WriteWithoutResponse");
+        values.put(Constants.kNotifyOnConnection, "NotifyOnConnection");
+        values.put(Constants.kNotifyOnDisconnection, "NotifyOnDisconnection");
+        values.put(Constants.kNotifyOnNotification, "NotifyOnNotification");
+        values.put(Constants.kDisconnected, "Disconnected");
+        values.put(Constants.kConnecting, "Connecting");
+        values.put(Constants.kConnected, "Connected");
+        values.put(Constants.kUnknown, "Unknown");
+        values.put(Constants.kResetting, "Resetting");
+        values.put(Constants.kUnsupported, "Unsupported");
+        values.put(Constants.kUnsupported, "Unauthorized");
+        values.put(Constants.kPoweredOff, "PoweredOff");
+        values.put(Constants.kPoweredOn, "PoweredOn");
         
         if(methods.get(hexString) != null)
         {

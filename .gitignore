@@ -11,6 +11,10 @@
 # Generated files
 bin/
 gen/
+build/generated
+build/intermediates
+build/outputs
+build/tmp
 
 # Local configuration file (sdk path, etc)
 local.properties
