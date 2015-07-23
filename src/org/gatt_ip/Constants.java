@@ -85,7 +85,6 @@ public class Constants {
 	public static final String kPeripheralBtAddress                            = "c1";
     public static final String kRawAdvertisementData                           = "c2";
     public static final String kScanRecord                                     = "c3";
-    public static final String kScanTime                                       = "c4";
 
 
     //Will Restore State Keys
@@ -129,8 +128,13 @@ public class Constants {
 	public static final String kError32603                     = "-32603";
 	public static final String kParseError                     = "-32700";
 
-    public static final String GAP_ADTYPE_FLAGS                 = "01";
-    public static final String GAP_ADTYPE_16BIT_SERVICEUUID     = "02";
-    public static final String GAP_ADTYPE_POWER_LEVEL           = "0A";
-    public static final String GAP_ADTYPE_MANUFACTURER_SPECIFIC = "FF";
+    public static final String GAP_ADTYPE_FLAGS                            = "01";
+    public static final String GAP_ADTYPE_INCOMPLETE_16BIT_SERVICEUUID     = "02";
+    public static final String GAP_ADTYPE_COMPLETE_16BIT_SERVICEUUID       = "03";
+    public static final String GAP_ADTYPE_INCOMPLETE_32BIT_SERVICEUUID     = "04";
+    public static final String GAP_ADTYPE_COMPLETE_32BIT_SERVICEUUID       = "05";
+    public static final String GAP_ADTYPE_INCOMPLETE_128BIT_SERVICEUUID    = "06";
+    public static final String GAP_ADTYPE_COMPLETE_128BIT_SERVICEUUID      = "07";
+    public static final String GAP_ADTYPE_POWER_LEVEL                      = "0A";
+    public static final String GAP_ADTYPE_MANUFACTURER_SPECIFIC            = "FF";
 }

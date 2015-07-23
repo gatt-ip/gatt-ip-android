@@ -15,7 +15,9 @@ import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -56,9 +58,9 @@ public class GATTIP implements ServiceConnection {
     public static int scanning = 0;
     private boolean mNotifications;
     private static boolean BTConnect = true;
-    //private static List<JSONObject> messageQueue = new ArrayList<JSONObject>();
-    //private static boolean isRequsetProcess = true;
-    //private static boolean isRequestExist = false;
+    private static List<JSONObject> messageQueue = new ArrayList<JSONObject>();
+    private static boolean isRequsetProcess = true;
+    private static boolean isRequestExist = false;
 
 
 
@@ -126,7 +128,7 @@ public class GATTIP implements ServiceConnection {
         } catch (JSONException e) {
             e.printStackTrace();
         }
-        /*try {
+        try {
             for(int i = 0; i < messageQueue.size(); i++) {
                  JSONObject reqObj = messageQueue.get(i);
                  String request = reqObj.getString(Constants.kMethod);
@@ -137,15 +139,15 @@ public class GATTIP implements ServiceConnection {
             }
         } catch (JSONException je) {
             je.printStackTrace();
-        }*/
+        }
         listener.response(jsonData.toString());
 
         //handle multiple commands
-        /*if (messageQueue.size() > 0) {
+        if (messageQueue.size() > 0) {
             isRequestExist = true;
             request(messageQueue.get(0).toString());
             isRequsetProcess = true;
-        }*/
+        }
     }
 
     BluetoothListener bluetoothListener = new BluetoothListener() {
@@ -203,8 +205,8 @@ public class GATTIP implements ServiceConnection {
             if (mConnectedDevices.contains(gatt)) {
                 for (int i = 0; i < mConnectedDevices.size(); i++) {
                     if (mConnectedDevices.get(i).equals(gatt))
-                        mConnectedDevices.remove(i);
-                }
+                       mConnectedDevices.remove(i);
+                 }
             }
         }
 
@@ -212,11 +214,13 @@ public class GATTIP implements ServiceConnection {
         public void connectionFailed(BluetoothGatt gatt){
             JSONObject response = new JSONObject();
             JSONObject errorCode = new JSONObject();
+            JSONObject parameters = new JSONObject();
             try {
                 errorCode.put(Constants.kCode, Constants.kError32603);
                 errorCode.put(Constants.kMessageField, "failed to connect");
+                parameters.put(Constants.kPeripheralUUID, gatt.getDevice().getAddress());
+                response.put(Constants.kParams, parameters);
                 response.put(Constants.kResult, Constants.kConnect);
-                response.put(Constants.kPeripheralUUID, gatt.getDevice().getAddress());
                 response.put(Constants.kError, errorCode);
 
                 sendResponse(response);
@@ -229,14 +233,12 @@ public class GATTIP implements ServiceConnection {
         public void getLEServices(BluetoothGatt gatt, int status){
             JSONObject response = new JSONObject();
             JSONObject errorCode = new JSONObject();
+            JSONObject parameters = new JSONObject();
 
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
                 List<JSONObject> services = Util.listOfJsonServicesFrom(gatt.getServices());
-
                 try {
-                    JSONObject parameters = new JSONObject();
-
                     parameters.put(Constants.kPeripheralUUID,peripheralUUIDString);
                     parameters.put(Constants.kServices, new JSONArray(services));
 
@@ -251,9 +253,9 @@ public class GATTIP implements ServiceConnection {
                 try {
                     errorCode.put(Constants.kCode, Constants.kError32603);
                     errorCode.put(Constants.kMessageField, "failed to get services");
-
+                    parameters.put(Constants.kPeripheralUUID, gatt.getDevice().getAddress());
+                    response.put(Constants.kParams, parameters);
                     response.put(Constants.kResult, Constants.kGetServices);
-                    response.put(Constants.kPeripheralUUID, gatt.getDevice().getAddress());
                     response.put(Constants.kError, errorCode);
 
                     sendResponse(response);
@@ -265,7 +267,7 @@ public class GATTIP implements ServiceConnection {
 
         @Override
         public void readCharacteristicValue(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status){
-            String characteristicUUIDString = characteristic.getUuid().toString().toUpperCase(Locale.getDefault());
+            String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getUuid().toString().toUpperCase(Locale.getDefault()));
             if(status == BluetoothGatt.GATT_SUCCESS) {
                 JSONObject response = new JSONObject();
                 JSONObject parameters = new JSONObject();
@@ -276,7 +278,7 @@ public class GATTIP implements ServiceConnection {
                 try {
                     String characteristicProperty = "" + characteristic.getProperties();
                     String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
-                    String serviceUUIDString = characteristic.getService().getUuid().toString().toUpperCase(Locale.getDefault());
+                    String serviceUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getService().getUuid().toString().toUpperCase(Locale.getDefault()));
                     int characteristicIsNotifying;
 
                     if (mNotifications)
@@ -341,7 +343,7 @@ public class GATTIP implements ServiceConnection {
 
         @Override
         public void writeCharacteristicValue(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-            String characteristicUUIDString = characteristic.getUuid().toString().toUpperCase(Locale.getDefault());
+            String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getUuid().toString().toUpperCase(Locale.getDefault()));
             String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
 
             JSONObject parameters = new JSONObject();
@@ -386,9 +388,9 @@ public class GATTIP implements ServiceConnection {
         public void setValueNotification(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
             JSONObject response = new JSONObject();
             JSONObject parameters = new JSONObject();
-            String characteristicUUIDString = characteristic.getUuid().toString().toUpperCase(Locale.getDefault());
+            String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getUuid().toString().toUpperCase(Locale.getDefault()));
             String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
-            String serviceUUIDString = characteristic.getService().getUuid().toString().toUpperCase(Locale.getDefault());
+            String serviceUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getService().getUuid().toString().toUpperCase(Locale.getDefault()));
             byte[] characteristicValue = characteristic.getValue();
             String characteristicValueString = Util.byteArrayToHex(characteristicValue);
             String characteristicProperty = "" + characteristic.getProperties();
@@ -440,20 +442,17 @@ public class GATTIP implements ServiceConnection {
         @Override
         public void readDescriptorValue(BluetoothGatt gatt,BluetoothGattDescriptor descriptor, int status){
             JSONObject response = new JSONObject();
-
+            JSONObject parameters = new JSONObject();
+            String desriptorUUID = Util.ConvertUUID_128bitInto16bit(descriptor.getUuid().toString());
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                String desriptorUUID = descriptor.getUuid().toString();
                 byte[] byteValue = descriptor.getValue();
-
                 try {
                     String descriptorValue = new String(byteValue, "UTF-8");
-
+                    parameters.put(Constants.kDescriptorUUID, desriptorUUID);
+                    parameters.put(Constants.kValue, descriptorValue);
                     response.put(Constants.kResult,Constants.kGetDescriptorValue);
-                    response.put(Constants.kDescriptorUUID, desriptorUUID);
-                    response.put(Constants.kValue, descriptorValue);
-
+                    response.put(Constants.kParams, parameters);
                     sendResponse(response);
-
                     return;
                 } catch (UnsupportedEncodingException e) {
                     e.printStackTrace();
@@ -466,10 +465,10 @@ public class GATTIP implements ServiceConnection {
                 JSONObject errorObj = new JSONObject();
                 errorObj.put(Constants.kCode, Constants.kError32603);
                 errorObj.put(Constants.kMessageField, "");
-
+                parameters.put(Constants.kDescriptorUUID, desriptorUUID);
                 response.put(Constants.kResult, Constants.kGetDescriptorValue);
                 response.put(Constants.kError, errorObj);
-
+                response.put(Constants.kParams, parameters);
                 sendResponse(response);
             } catch (JSONException e) {
                 e.printStackTrace();
@@ -499,9 +498,9 @@ public class GATTIP implements ServiceConnection {
             if (!mNotifications) {
                 BluetoothGattCharacteristic characteristic = descriptor.getCharacteristic();
                 JSONObject response = new JSONObject();
-                String characteristicUUIDString = characteristic.getUuid().toString().toUpperCase(Locale.getDefault());
+                String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getUuid().toString().toUpperCase(Locale.getDefault()));
                 String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
-                String serviceUUIDString = characteristic.getService().getUuid().toString().toUpperCase(Locale.getDefault());
+                String serviceUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getService().getUuid().toString().toUpperCase(Locale.getDefault()));
                 String characteristicValueString = Util.byteArrayToHex(characteristic.getValue());
                 String characteristicProperty = ""+ characteristic.getProperties();
                 int characteristicIsNotifying;
@@ -551,21 +550,20 @@ public class GATTIP implements ServiceConnection {
         @Override
         public void readRemoteRssi(BluetoothGatt gatt, int rssi, int status){
             JSONObject response = new JSONObject();
-
+            JSONObject parameters = new JSONObject();
+            String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
+            BluetoothDevice device = gatt.getDevice();
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
-                BluetoothDevice device = gatt.getDevice();
                 try {
                     response.put(Constants.kResult, Constants.kGetRSSI);
-                    response.put(Constants.kPeripheralUUID,peripheralUUIDString);
+                    parameters.put(Constants.kPeripheralUUID,peripheralUUIDString);
                     if(device.getName() != null)
-                        response.put(Constants.kPeripheralName, device.getName());
+                        parameters.put(Constants.kPeripheralName, device.getName());
                     else
-                        response.put(Constants.kPeripheralName, "");
-                    response.put(Constants.kRSSIkey, rssi);
-
+                        parameters.put(Constants.kPeripheralName, "");
+                    parameters.put(Constants.kRSSIkey, rssi);
+                    response.put(Constants.kParams, parameters);
                     sendResponse(response);
-
                     return;
                 } catch (JSONException e) {
                     e.printStackTrace();
@@ -576,8 +574,14 @@ public class GATTIP implements ServiceConnection {
                 JSONObject errorObj = new JSONObject();
                 errorObj.put(Constants.kCode, Constants.kError32603);
                 errorObj.put(Constants.kMessageField, "");
+                parameters.put(Constants.kPeripheralUUID,peripheralUUIDString);
+                if(device.getName() != null)
+                    parameters.put(Constants.kPeripheralName, device.getName());
+                else
+                    parameters.put(Constants.kPeripheralName, "");
                 response.put(Constants.kResult, Constants.kGetRSSI);
                 response.put(Constants.kError, errorObj);
+                response.put(Constants.kParams, parameters);
                 sendResponse(response);
             } catch (JSONException e) {
                 e.printStackTrace();
@@ -588,6 +592,8 @@ public class GATTIP implements ServiceConnection {
 
     // method to call request coming from client
     public void request(String gattipMesg) {
+        Log.d("request",gattipMesg);
+
         if (gattipMesg == null) {
             invalidRequest();
             return;
@@ -604,71 +610,85 @@ public class GATTIP implements ServiceConnection {
                 String method = reqObj.getString(Constants.kMethod);
                 String[] request = method.split(",");
 
-                for (int i = 0; i < request.length; i++) {
-                    mMessage = request[i];
+                mMessage = method;
+                if(isRequestExist == true) {
+                    isRequestExist = false;
+                    messageQueue.add(reqObj);
+                }
 
-                    if (mMessage == null) {
-                        try {
-                            JSONObject errorObj = new JSONObject();
-                            errorObj.put(Constants.kCode,Constants.kInvalidRequest);
-                            JSONObject jsonData = new JSONObject();
-                            jsonData.put(Constants.kError, errorObj);
-                            jsonData.put(Constants.kIdField, null);
-                            sendResponse(jsonData);
-                        } catch (JSONException je) {
-                            je.printStackTrace();
-                        }
-
-                        return;
+                if (mMessage == null) {
+                    try {
+                        JSONObject errorObj = new JSONObject();
+                        errorObj.put(Constants.kCode,Constants.kInvalidRequest);
+                        JSONObject jsonData = new JSONObject();
+                        jsonData.put(Constants.kError, errorObj);
+                        jsonData.put(Constants.kIdField, null);
+                        sendResponse(jsonData);
+                    } catch (JSONException je) {
+                        je.printStackTrace();
                     }
 
-                    if (mMessage.equals(Constants.kConfigure)) {
-                        configure(reqObj);
-                    } else if (mMessage.equals(Constants.kConnect)) {
-                        connectStick(reqObj);
-                    } else if (mMessage.equals(Constants.kDisconnect)) {
-                        disconnectStick(reqObj);
-                    } else if (mMessage.equals(Constants.kGetPerhipheralsWithServices)) {
-                        getPerhipheralsWithServices(reqObj);
-                    } else if (mMessage.equals(Constants.kGetPerhipheralsWithIdentifiers)) {
-                        getPerhipheralsWithIdentifiers(reqObj);
-                    } else if (mMessage.equals(Constants.kScanForPeripherals)) {
-                        scanForPeripherals(reqObj);
-                    } else if (mMessage.equals(Constants.kStopScanning)) {
-                        stopScanning(reqObj);
-                    } else if (mMessage.equals(Constants.kCentralState)) {
-                        getConnectionState(reqObj);
-                    } else if (mMessage.equals(Constants.kGetConnectedPeripherals)) {
-                        getConnectedPeripherals(reqObj);
-                    } else if (mMessage.equals(Constants.kGetServices)) {
-                        getServices(reqObj);
-                    } else if (mMessage != null && mMessage.equals(Constants.kGetIncludedServices)) {
-                        getIncludedServices(reqObj);
-                    } else if (mMessage.equals(Constants.kGetCharacteristics)) {
-                        getCharacteristics(reqObj);
-                    } else if (mMessage.equals(Constants.kGetDescriptors)) {
-                        getDescriptors(reqObj);
-                    } else if (mMessage.equals(Constants.kGetCharacteristicValue)) {
-                        getCharacteristicValue(reqObj);
-                    } else if (mMessage.equals(Constants.kGetDescriptorValue)) {
-                        getDescriptorValue(reqObj);
-                    } else if (mMessage.equals(Constants.kWriteCharacteristicValue)) {
-                        writeCharacteristicValue(reqObj);
-                    } else if (mMessage.equals(Constants.kSetValueNotification)) {
-                        setValueNotification(reqObj);
-                    } else if (mMessage.equals(Constants.kGetPeripheralState)) {
-                        getPeripheralState(reqObj);
-                    } else if (mMessage.equals(Constants.kGetRSSI)) {
-                        getRSSI(reqObj);
-                    } else {
-                        JSONObject invalidMethod = new JSONObject();
-                        invalidMethod.put("Error", "Your Method is invalid");
-                        sendResponse(invalidMethod);
-                    }
+                     return;
+                }
+                if(messageQueue.size() >= 1 && isRequsetProcess == true) {
+                    isRequsetProcess = false;
+                    requestMethod(reqObj, mMessage);
+                } else {
+                    requestMethod(reqObj, mMessage);
                 }
             }
         } catch (JSONException e) {
             e.printStackTrace();
+        }
+    }
+
+    public void requestMethod(JSONObject reqObj ,String message) {
+        if (mMessage.equals(Constants.kConfigure)) {
+            configure(reqObj);
+        } else if (mMessage.equals(Constants.kConnect)) {
+            connectStick(reqObj);
+        } else if (mMessage.equals(Constants.kDisconnect)) {
+            disconnectStick(reqObj);
+        } else if (mMessage.equals(Constants.kGetPerhipheralsWithServices)) {
+            getPerhipheralsWithServices(reqObj);
+        } else if (mMessage.equals(Constants.kGetPerhipheralsWithIdentifiers)) {
+            getPerhipheralsWithIdentifiers(reqObj);
+        } else if (mMessage.equals(Constants.kScanForPeripherals)) {
+            scanForPeripherals(reqObj);
+        } else if (mMessage.equals(Constants.kStopScanning)) {
+            stopScanning(reqObj);
+        } else if (mMessage.equals(Constants.kCentralState)) {
+            getConnectionState(reqObj);
+        } else if (mMessage.equals(Constants.kGetConnectedPeripherals)) {
+            getConnectedPeripherals(reqObj);
+        } else if (mMessage.equals(Constants.kGetServices)) {
+            getServices(reqObj);
+        } else if (mMessage != null && mMessage.equals(Constants.kGetIncludedServices)) {
+            getIncludedServices(reqObj);
+        } else if (mMessage.equals(Constants.kGetCharacteristics)) {
+            getCharacteristics(reqObj);
+        } else if (mMessage.equals(Constants.kGetDescriptors)) {
+            getDescriptors(reqObj);
+        } else if (mMessage.equals(Constants.kGetCharacteristicValue)) {
+            getCharacteristicValue(reqObj);
+        } else if (mMessage.equals(Constants.kGetDescriptorValue)) {
+            getDescriptorValue(reqObj);
+        } else if (mMessage.equals(Constants.kWriteCharacteristicValue)) {
+            writeCharacteristicValue(reqObj);
+        } else if (mMessage.equals(Constants.kSetValueNotification)) {
+            setValueNotification(reqObj);
+        } else if (mMessage.equals(Constants.kGetPeripheralState)) {
+            getPeripheralState(reqObj);
+        } else if (mMessage.equals(Constants.kGetRSSI)) {
+            getRSSI(reqObj);
+        } else {
+            try {
+                JSONObject invalidMethod = new JSONObject();
+                invalidMethod.put("Error", "Your Method is invalid");
+                sendResponse(invalidMethod);
+            } catch (JSONException je) {
+                je.printStackTrace();
+            }
         }
     }
 
@@ -683,11 +703,12 @@ public class GATTIP implements ServiceConnection {
             }
         }
 
-        /*if(messageQueue != null) {
+        if(messageQueue != null) {
             for(int j = 0; j < messageQueue.size(); j++) {
                 messageQueue.remove(j);
             }
-        }*/
+        }
+
         JSONObject response = new JSONObject();
 
         try {
@@ -847,7 +868,7 @@ public class GATTIP implements ServiceConnection {
 
         mLeScanlistener = new BluetoothLEScanner.LEScanListener() {
             @Override
-            public void onLeScan(BluetoothDevice device, int rssi, JSONObject mutatedAdevertismentData) {
+            public void onLeScan(BluetoothDevice device, int rssi,List<String> serviceUUIDs, JSONObject mutatedAdevertismentData) {
                 if(device == null) {
                     return;
                 }
@@ -861,35 +882,12 @@ public class GATTIP implements ServiceConnection {
                     mAvailableDevices.add(device);
                 }
 
-                try {
-                    JSONObject response = new JSONObject();
-                    JSONObject parameters = new JSONObject();
-
-                    if(device.getAddress() != null) {
-                        String btAddr = device.getAddress().replaceAll(":", "-");
-                        parameters.put(Constants.kPeripheralBtAddress,btAddr);
-                        parameters.put(Constants.kPeripheralUUID, device.getAddress());
-                    }
-
-                    parameters.put(Constants.kAdvertisementDataKey, mutatedAdevertismentData);
-                    parameters.put(Constants.kRSSIkey, rssi);
-
-                    if(device.getName() != null)
-                        parameters.put(Constants.kPeripheralName, device.getName());
-                    else
-                        parameters.put(Constants.kPeripheralName,"Unknown");
-                    response.put(Constants.kResult, Constants.kScanForPeripherals);
-                    response.put(Constants.kParams, parameters);
-                    sendResponse(response);
-                } catch (JSONException je) {
-                    je.printStackTrace();
-                }
-               /* if(serviceList.size()>0) {
+                if(serviceList.size()>0) {
                     int count = 0;
 
                     for (int i = 0; i < serviceUUIDs.size(); i++) {
                        for (int j = 0; j < serviceList.size(); j++) {
-                           if (serviceUUIDs.get(i).equals(serviceList.get(j))) {
+                           if (serviceUUIDs.get(i).contains(serviceList.get(j)) || serviceUUIDs.get(i).contains(serviceList.get(j))) {
                                 count++;
                            }
                        }
@@ -901,42 +899,24 @@ public class GATTIP implements ServiceConnection {
                     }
                 }  else {
                     SendScanResponse(device, rssi, mutatedAdevertismentData);
-                }*/
+                }
             }
         };
 
-        /*if(params.has(Constants.kScanTime)) {
-            try {
-                int scanTime = Integer.parseInt(params.getString(Constants.kScanTime));
+       if(scanning > 0 && mLeScanner != null) {
+           mLeScanner.stopLEScan();
+           SystemClock.sleep(1000);
+       } else {
+           int apiVersion = android.os.Build.VERSION.SDK_INT;
 
-                Handler mHandler = new Handler(Looper.getMainLooper());
-                mHandler.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mLeScanner != null) {
-                            mLeScanner.stopLEScan();
-                        }
-                    }
-                }, scanTime*1000);
-            } catch (JSONException je) {
-                je.printStackTrace();
-            }
-        }*/
+           if (apiVersion >= Build.VERSION_CODES.LOLLIPOP) {
+               mLeScanner = new BluetoothLEScannerForLollipop(mContext);
+           } else {
+               mLeScanner = new BluetoothLEScannerForMR2(mContext);
+           }
 
-        if(scanning > 0 && mLeScanner != null) {
-            mLeScanner.stopLEScan();
-            SystemClock.sleep(1000);
-        } else {
-            int apiVersion = android.os.Build.VERSION.SDK_INT;
-
-            if (apiVersion >= Build.VERSION_CODES.LOLLIPOP) {
-                mLeScanner = new BluetoothLEScannerForLollipop(mContext);
-            } else {
-                mLeScanner = new BluetoothLEScannerForMR2(mContext);
-            }
-
-            mLeScanner.registerScanListener(mLeScanlistener);
-        }
+           mLeScanner.registerScanListener(mLeScanlistener);
+       }
 
         mLeScanner.startLEScan();
 
@@ -1174,7 +1154,7 @@ public class GATTIP implements ServiceConnection {
             reqParameters = reqObj.getJSONObject(Constants.kParams);
             String serviceUUIDString = reqParameters.getString(Constants.kServiceUUID).toUpperCase(Locale.getDefault());
             sCBUUID = serviceUUIDString;
-            UUID serviceUUID = UUID.fromString(serviceUUIDString);
+            UUID serviceUUID = UUID.fromString(Util.ConvertUUID_16bitInto128bit(serviceUUIDString));
             HashMap<BluetoothGatt, BluetoothGattService> requestedPeripheralAndService = Util.serviceIn(mConnectedDevices, serviceUUID);
             Set<BluetoothGatt> keySet = requestedPeripheralAndService.keySet();
             BluetoothGatt bGatt = null;
@@ -1219,7 +1199,7 @@ public class GATTIP implements ServiceConnection {
 
                 if(reqparameters.has(Constants.kCharacteristicUUID)) {
                     String characteristicsUUIDString = reqparameters.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault());
-                    UUID characteristicsUUID = UUID.fromString(characteristicsUUIDString);
+                    UUID characteristicsUUID = UUID.fromString(Util.ConvertUUID_16bitInto128bit(characteristicsUUIDString));
                     HashMap<BluetoothGatt, BluetoothGattCharacteristic> peripheralAndCharacteristic = Util.characteristicIn(mConnectedDevices, characteristicsUUID);
                     Set<BluetoothGatt> keySet = peripheralAndCharacteristic.keySet();
                     BluetoothGatt gatt = null;
@@ -1277,7 +1257,7 @@ public class GATTIP implements ServiceConnection {
                 JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
                 if(jObj.has(Constants.kCharacteristicUUID)) {
-                    String uuidString =  jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault());
+                    String uuidString =  Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault()));
                     UUID characteristicUUID = UUID.fromString(uuidString);
                     HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristics = Util.characteristicIn(mConnectedDevices, characteristicUUID);
                     Set<BluetoothGatt> keySet = characteristics.keySet();
@@ -1314,7 +1294,7 @@ public class GATTIP implements ServiceConnection {
                 JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
                 if(jObj.has(Constants.kCharacteristicUUID) && jObj.has(Constants.kValue)) {
-                    String uuidString = jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault());
+                    String uuidString = Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault()));
                     writeData = Util.hexStringToByteArray(jObj.getString(Constants.kValue));
                     UUID characteristicUUID = UUID.fromString(uuidString);
                     HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristics = Util.characteristicIn(mConnectedDevices, characteristicUUID);
@@ -1331,7 +1311,7 @@ public class GATTIP implements ServiceConnection {
                         String writeType = null;
 
                         if(jObj.has(Constants.kWriteType)) {
-                            writeType = Util.writeTypeForCharacteristicGiven(jObj.getString(Constants.kWriteType));
+                           writeType = Util.writeTypeForCharacteristicGiven(jObj.getString(Constants.kWriteType));
                         }
 
                         mService.writeCharacteristicValue(bGatt, characteristic, writeType, writeData);
@@ -1361,7 +1341,7 @@ public class GATTIP implements ServiceConnection {
                 JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
                 if(jObj.has(Constants.kCharacteristicUUID) && jObj.has(Constants.kValue)) {
-                    String uuidString = jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault());
+                    String uuidString = Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault()));
                     String subscribe = jObj.getString(Constants.kValue);
                     Boolean subscribeBOOL;
 
@@ -1403,7 +1383,7 @@ public class GATTIP implements ServiceConnection {
                 JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
                 if(jObj.has(Constants.kDescriptorUUID)) {
-                    String uuidString = jObj.getString(Constants.kDescriptorUUID).toUpperCase(Locale.getDefault());
+                    String uuidString = Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kDescriptorUUID).toUpperCase(Locale.getDefault()));
                     UUID descriptorUUID = UUID.fromString(uuidString);
                     HashMap<BluetoothGatt, BluetoothGattDescriptor> descriptors = Util.descriptorIn(mConnectedDevices, descriptorUUID);
                     Set<BluetoothGatt> keySet = descriptors.keySet();
@@ -1711,7 +1691,7 @@ public class GATTIP implements ServiceConnection {
                 if (!stateString.equals("") && stateString != null) {
                     if(BTConnect) {
                         BTConnect = false;
-                        Log.v("action state changed", stateString);
+                    Log.v("action state changed", stateString);
                         try {
                             parameters.put(Constants.kState, stateString);
 
@@ -1728,14 +1708,6 @@ public class GATTIP implements ServiceConnection {
                 }
             } else if(action.equals(BluetoothDevice.ACTION_BOND_STATE_CHANGED)) {
                 final int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
-
-                if(state == BluetoothDevice.BOND_BONDING) {
-                    Log.v("bonding","*******state bonding");
-                } else if(state == BluetoothDevice.BOND_BONDED) {
-                    Log.v("bondes","******state bonded");
-                } else if(state == BluetoothDevice.BOND_NONE) {
-                    Log.v("none","***** no bonding");
-                }
 
             }
         }

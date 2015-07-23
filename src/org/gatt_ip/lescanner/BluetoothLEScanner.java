@@ -61,6 +61,6 @@ public abstract class BluetoothLEScanner {
 
 
     public interface LEScanListener {
-        public void onLeScan(BluetoothDevice device, int rssi, JSONObject mutatedAdevertismentData);
+        public void onLeScan(BluetoothDevice device, int rssi,List<String> serviceUUIDs, JSONObject mutatedAdevertismentData);
     }
 }

@@ -151,7 +151,7 @@ public class Util {
                 isPrimary = 0;
             String serviceUUIDString = service.getUuid().toString().toUpperCase(Locale.getDefault());
             try {
-                jsonObj.put(Constants.kServiceUUID,serviceUUIDString);
+                jsonObj.put(Constants.kServiceUUID,ConvertUUID_128bitInto16bit(serviceUUIDString));
                 jsonObj.put(Constants.kIsPrimaryKey, isPrimary);
                 jsonList.add(jsonObj);
                 
@@ -175,7 +175,7 @@ public class Util {
             if(characteristcProperty.equals("34"))
                 characteristcProperty = "18";
             try {
-                jsonObj.put(Constants.kCharacteristicUUID,characterisUUIDString);
+                jsonObj.put(Constants.kCharacteristicUUID,ConvertUUID_128bitInto16bit(characterisUUIDString));
                 jsonObj.put(Constants.kIsNotifying, 0);
                 jsonObj.put(Constants.kProperties, characteristcProperty);
                 jsonObj.put(Constants.kValue, "");
@@ -197,7 +197,7 @@ public class Util {
             BluetoothGattDescriptor descriptor = iterator.next();
             String descriptorUUIDString = descriptor.getUuid().toString().toUpperCase(Locale.getDefault());
             try {
-                jsonObj.put(Constants.kDescriptorUUID,descriptorUUIDString);
+                jsonObj.put(Constants.kDescriptorUUID,ConvertUUID_128bitInto16bit(descriptorUUIDString));
                 jsonList.add(jsonObj);
             } catch (JSONException e) {
                 e.printStackTrace();
@@ -309,7 +309,53 @@ public class Util {
         return data;
     }
 
-    public static String humanReadableFormatFromHex(String hexString)
+    public static String ConvertUUID_128bitInto16bit(String UUIDString) {
+        //String _UUIDString = UUIDString;
+        String reqValueFinal_16bit = "";
+        String BluetoothBaseUUID = ("00000000-0000-1000-8000-00805F9B34FB").toString().replaceAll("-", "");
+        BigInteger _BluetoothBaseUUIDInIntFormat = new BigInteger(BluetoothBaseUUID ,16);
+        String _UUIDString = UUIDString.replaceAll("-", "");
+        BigInteger UUIDInIntFormat = new BigInteger(_UUIDString , 16);
+        BigInteger ResultToCheckDefinedUUID = UUIDInIntFormat.and(_BluetoothBaseUUIDInIntFormat);
+        if(ResultToCheckDefinedUUID.equals(_BluetoothBaseUUIDInIntFormat)) {
+            BigDecimal base = new BigDecimal("2");
+            BigInteger divisor = base.pow(96).toBigInteger();
+            BigInteger reqValue16bit = (UUIDInIntFormat.subtract(_BluetoothBaseUUIDInIntFormat)).divide(divisor);
+
+            reqValueFinal_16bit = reqValue16bit.toString(16);
+        } else {
+            reqValueFinal_16bit = UUIDString;
+        }
+        return reqValueFinal_16bit.toUpperCase(Locale.getDefault());
+    }
+
+    public static String ConvertUUID_16bitInto128bit(String UUIDString) {
+        String _UUIDString = UUIDString;
+        String reqValueFinal_128bit = "";
+
+        if(UUIDString.length() == 4) {
+            String BluetoothBaseUUID = ("00000000-0000-1000-8000-00805F9B34FB").toString().replaceAll("-", "");
+            BigInteger bluetoothBaseInIntegerFormat = new BigInteger(BluetoothBaseUUID, 16);
+            BigInteger UUIDInIntFormat = new BigInteger(UUIDString, 16);
+            BigDecimal base = new BigDecimal("2");
+            BigInteger multiplier = base.pow(96).toBigInteger();
+            BigInteger reqValue_128bit = (UUIDInIntFormat.multiply(multiplier)).add(bluetoothBaseInIntegerFormat);
+            reqValueFinal_128bit = "0000" + reqValue_128bit.toString(16).toUpperCase(Locale.getDefault());
+
+            String str1 = reqValueFinal_128bit.substring(0, 8);
+            String str2 = reqValueFinal_128bit.substring(8, 12);
+            String str3 = reqValueFinal_128bit.substring(12, 16);
+            String str4 = reqValueFinal_128bit.substring(16, 20);
+            String str5 = reqValueFinal_128bit.substring(20);
+            reqValueFinal_128bit = str1 + "-" + str2 + "-" + str3 + "-" + str4 + "-" + str5;
+        }
+        else {
+            reqValueFinal_128bit = _UUIDString;
+        }
+        return reqValueFinal_128bit.toUpperCase(Locale.getDefault());
+    }
+
+   public static String humanReadableFormatFromHex(String hexString)
     {
         HashMap<String, String> methods = new HashMap<String, String>();
         methods.put(Constants.kConfigure, "Configure");

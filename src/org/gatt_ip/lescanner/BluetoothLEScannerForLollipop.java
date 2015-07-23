@@ -120,13 +120,94 @@ public final class BluetoothLEScannerForLollipop extends BluetoothLEScanner {
                     for(int i = 0; i < scanRecord.length; i++) {
                         scanRed[i] = wrapped.get(i);
                     }
+                    boolean flag = true;
                     String scanRecordString = Util.byteArrayToHex(scanRed);
+                    List<String> advdata = new ArrayList<>();
+                    if(scanRecordString.length()%2 == 0) {
+                        for(int i=0; i < scanRecordString.length(); i=i+2) {
+                            StringBuilder sb = new StringBuilder(2);
+                            sb.append(scanRecordString.charAt(i));
+                            sb.append(scanRecordString.charAt(i+1));
+                            advdata.add(sb.toString());
+                        }
+                    } else {
+                        for(int i=0; i < scanRecordString.length(); i++) {
+                            StringBuilder sb = new StringBuilder(2);
+                            sb.append(scanRecordString.charAt(2*i));
+                            sb.append(scanRecordString.charAt(2 * i + 1));
+                            advdata.add(sb.toString());
+                        }
+                    }
 
+                    do {
+                        if(advdata.get(1).equals(Constants.GAP_ADTYPE_FLAGS)) {
+                            int advdataLength = Integer.parseInt(advdata.get(0),16);
+
+                            for(int i = 0; i <= advdataLength; i++) {
+                                advdata.remove(0);
+                            }
+                        } else  if(advdata.get(1).equals(Constants.GAP_ADTYPE_POWER_LEVEL)){
+                            int advdataLength = Integer.parseInt(advdata.get(0),16);
+
+                            for(int i = 0; i <= advdataLength; i++) {
+                                advdata.remove(0);
+                            }
+                        } else if(advdata.get(1).equals(Constants.GAP_ADTYPE_INCOMPLETE_16BIT_SERVICEUUID) || advdata.get(1).equals(Constants.GAP_ADTYPE_COMPLETE_16BIT_SERVICEUUID)) {
+                            int advdataLength = Integer.parseInt(advdata.get(0),16);
+                            StringBuilder sb = new StringBuilder();
+                            for(int i = advdataLength; i >= 2; i--) {
+                                sb.append(advdata.get(i));
+                            }
+                            if(sb.length() > 0)
+                                serviceUUIDs.add(sb.toString());
+                            for(int i = 0; i <= advdataLength; i++) {
+                                advdata.remove(0);
+                            }
+                        } else if(advdata.get(1).equals(Constants.GAP_ADTYPE_INCOMPLETE_32BIT_SERVICEUUID) || advdata.get(1).equals(Constants.GAP_ADTYPE_COMPLETE_32BIT_SERVICEUUID)) {
+                            int advdataLength = Integer.parseInt(advdata.get(0),16);
+                            StringBuilder sb = new StringBuilder();
+                            for(int i = advdataLength; i >= 2; i--) {
+                                sb.append(advdata.get(i));
+                            }
+                            if(sb.length() > 0)
+                                serviceUUIDs.add(sb.toString());
+                            for(int i = 0; i <= advdataLength; i++) {
+                                advdata.remove(0);
+                            }
+                        } else if(advdata.get(1).equals(Constants.GAP_ADTYPE_INCOMPLETE_128BIT_SERVICEUUID) || advdata.get(1).equals(Constants.GAP_ADTYPE_COMPLETE_128BIT_SERVICEUUID)) {
+                            int advdataLength = Integer.parseInt(advdata.get(0),16);
+                            StringBuilder sb = new StringBuilder();
+                            for(int i = advdataLength; i >= 2; i--) {
+                                sb.append(advdata.get(i));
+                            }
+                            if(sb.length() > 0)
+                                serviceUUIDs.add(sb.toString());
+                            for(int i = 0; i <= advdataLength; i++) {
+                                advdata.remove(0);
+                            }
+                        } else if(advdata.get(1).equals(Constants.GAP_ADTYPE_MANUFACTURER_SPECIFIC)) {
+                            int advdataLength = Integer.parseInt(advdata.get(0),16);
+
+                            for(int i = 0; i <= advdataLength; i++) {
+                                advdata.remove(0);
+                            }
+                        } else if(advdata.get(1).equals("00")) {
+                            advdata.remove(0);
+                        } else {
+                            int advdataLength = Integer.parseInt(advdata.get(0),16);
+                            for(int i = 0; i <= advdataLength; i++) {
+                                advdata.remove(0);
+                            }
+                        }
+                        if(advdata.size() <= 1)
+                            flag = false;
+                    }while(flag);
+                    Log.v("scan record", scanRecordString);
                     mutatedAdevertismentData.put(Constants.kRawAdvertisementData, scanRecordString);
                 } catch (JSONException je) {
                     je.printStackTrace();
                 }
-                    mListener.onLeScan(result.getDevice(), result.getRssi(), mutatedAdevertismentData);
+                    mListener.onLeScan(result.getDevice(), result.getRssi(),serviceUUIDs, mutatedAdevertismentData);
             }
         }
 
