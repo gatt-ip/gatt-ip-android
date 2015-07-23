@@ -11,10 +11,10 @@
 # Generated files
 bin/
 gen/
-
-# Gradle files
-.gradle/
-build/
+build/generated
+build/intermediates
+build/outputs
+build/tmp
 
 # Local configuration file (sdk path, etc)
 local.properties
