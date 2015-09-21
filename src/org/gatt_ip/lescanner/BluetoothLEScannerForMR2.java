@@ -128,43 +128,65 @@ public final class BluetoothLEScannerForMR2 extends BluetoothLEScanner {
                 }
 
                 do {
-                    if(advdata.get(1).equals(Constants.GAP_ADTYPE_FLAGS)) {
+                    if(advdata.get(1).equals(Constants.kGAP_ADTYPE_FLAGS)) {
                         int advdataLength = Integer.parseInt(advdata.get(0),16);
 
                         for(int i = 0; i <= advdataLength; i++) {
                             advdata.remove(0);
                         }
-                    } else  if(advdata.get(1).equals(Constants.GAP_ADTYPE_POWER_LEVEL)){
+                    } else  if(advdata.get(1).equals(Constants.kGAP_ADTYPE_POWER_LEVEL)){
                         int advdataLength = Integer.parseInt(advdata.get(0),16);
 
                         for(int i = 0; i <= advdataLength; i++) {
                             advdata.remove(0);
                         }
-                    } else if(advdata.get(1).equals(Constants.GAP_ADTYPE_INCOMPLETE_16BIT_SERVICEUUID) || advdata.get(1).equals(Constants.GAP_ADTYPE_COMPLETE_16BIT_SERVICEUUID)) {
+                    } else if(advdata.get(1).equals(Constants.kGAP_ADTYPE_INCOMPLETE_16BIT_SERVICEUUID) || advdata.get(1).equals(Constants.kGAP_ADTYPE_COMPLETE_16BIT_SERVICEUUID)) {
                         int advdataLength = Integer.parseInt(advdata.get(0),16);
+                        StringBuilder sb = new StringBuilder();
+                        int j = 0;
                         for(int i = advdataLength; i >= 2; i--) {
-                            serviceUUIDs.add(advdata.get(i));
+                            sb.append(advdata.get(i));
+                            j++;
+                            if(j == 2) {
+                                serviceUUIDs.add(sb.toString());
+                                j = 0;
+                                sb.delete(0,4);
+                            }
                         }
                         for(int i = 0; i <= advdataLength; i++) {
                             advdata.remove(0);
                         }
-                    } else if(advdata.get(1).equals(Constants.GAP_ADTYPE_INCOMPLETE_32BIT_SERVICEUUID) || advdata.get(1).equals(Constants.GAP_ADTYPE_COMPLETE_32BIT_SERVICEUUID)) {
+                    } else if(advdata.get(1).equals(Constants.kGAP_ADTYPE_INCOMPLETE_32BIT_SERVICEUUID) || advdata.get(1).equals(Constants.kGAP_ADTYPE_COMPLETE_32BIT_SERVICEUUID)) {
                         int advdataLength = Integer.parseInt(advdata.get(0),16);
+                        StringBuilder sb = new StringBuilder();
+                        int j = 0;
                         for(int i = advdataLength; i >= 2; i--) {
-                            serviceUUIDs.add(advdata.get(i));
+                            sb.append(advdata.get(i));
+                            j++;
+                            if(j == 4) {
+                                serviceUUIDs.add(sb.toString());
+                                j = 0;
+                                sb.delete(0,8);
+                            }
                         }
                         for(int i = 0; i <= advdataLength; i++) {
                             advdata.remove(0);
                         }
-                    } else if(advdata.get(1).equals(Constants.GAP_ADTYPE_INCOMPLETE_128BIT_SERVICEUUID) || advdata.get(1).equals(Constants.GAP_ADTYPE_COMPLETE_128BIT_SERVICEUUID)) {
+                    } else if(advdata.get(1).equals(Constants.kGAP_ADTYPE_INCOMPLETE_128BIT_SERVICEUUID) || advdata.get(1).equals(Constants.kGAP_ADTYPE_COMPLETE_128BIT_SERVICEUUID)) {
                         int advdataLength = Integer.parseInt(advdata.get(0),16);
+                        StringBuilder sb = new StringBuilder();
                         for(int i = advdataLength; i >= 2; i--) {
-                            serviceUUIDs.add(advdata.get(i));
+                            sb.append(advdata.get(i));
+                            if (i == 14 || i == 12 || i == 10 || i == 8) {
+                                sb.append("-");
+                            }
                         }
+                        if(sb.length() > 0)
+                            serviceUUIDs.add(sb.toString());
                         for(int i = 0; i <= advdataLength; i++) {
                             advdata.remove(0);
                         }
-                    } else if(advdata.get(1).equals(Constants.GAP_ADTYPE_MANUFACTURER_SPECIFIC)) {
+                    } else if(advdata.get(1).equals(Constants.kGAP_ADTYPE_MANUFACTURER_SPECIFIC)) {
                         int advdataLength = Integer.parseInt(advdata.get(0),16);
 
                         for(int i = 0; i <= advdataLength; i++) {

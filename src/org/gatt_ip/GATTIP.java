@@ -33,23 +33,19 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
 public class GATTIP implements ServiceConnection {
 
-    private static final String TAG = GATTIP.class.getName();
     private static final int MAX_NUMBER_OF_REQUESTS = 60;
-
     private ArrayList<BluetoothGatt> mConnectedDevices;
-
-    private String mMessage;
     private Context mContext;
-    private GATTIPListener listener;
+    static GATTIPListener listener;
     private BluetoothAdapter mBluetoothAdapter;
     private List<BluetoothDevice> mAvailableDevices;
-    private List<String> mCommandArray;
     private BluetoothLEScanner mLeScanner;
     private String mAddress;
     private BluetoothService mService;
@@ -59,17 +55,14 @@ public class GATTIP implements ServiceConnection {
     private boolean mNotifications;
     private static boolean BTConnect = true;
     private static List<JSONObject> messageQueue = new ArrayList<JSONObject>();
-    private static boolean isRequsetProcess = true;
-    private static boolean isRequestExist = false;
-
-
+    private static boolean isRequestExist = true;
+    final ArrayList<String> serviceList = new ArrayList<String>();
 
     public GATTIP(Context ctx) {
         mContext = ctx;
         previousRequests = new ArrayList<JSONObject>();
         mAvailableDevices = new ArrayList<BluetoothDevice>();
         mConnectedDevices = new ArrayList<BluetoothGatt>();
-        mCommandArray = new ArrayList<String>();
         mContext.bindService(new Intent(mContext, BluetoothService.class), this, 0);
         mContext.startService(new Intent(mContext, BluetoothService.class));
     }
@@ -130,23 +123,28 @@ public class GATTIP implements ServiceConnection {
         }
         try {
             for(int i = 0; i < messageQueue.size(); i++) {
-                 JSONObject reqObj = messageQueue.get(i);
-                 String request = reqObj.getString(Constants.kMethod);
-                 String response = jsonData.getString(Constants.kResult);
-                 if(request.equals(response)) {
-                   messageQueue.remove(i);
-                 }
+                JSONObject reqObj = messageQueue.get(i);
+                String request = reqObj.getString(Constants.kMethod);
+                String response = jsonData.getString(Constants.kResult);
+                JSONObject requestParams = reqObj.getJSONObject(Constants.kParams);
+                JSONObject responseParams = jsonData.getJSONObject(Constants.kParams);
+                if(request.equals(response) && requestParams.getString(Constants.kCharacteristicUUID).equals(responseParams.getString(Constants.kCharacteristicUUID))) {
+                    messageQueue.remove(i);
+                    isRequestExist = true;
+                    break;
+                }
             }
         } catch (JSONException je) {
             je.printStackTrace();
         }
         listener.response(jsonData.toString());
-
         //handle multiple commands
-        if (messageQueue.size() > 0) {
-            isRequestExist = true;
-            request(messageQueue.get(0).toString());
-            isRequsetProcess = true;
+        if (messageQueue.size() > 0 && isRequestExist) {
+            try {
+                requestMethod(messageQueue.get(0), messageQueue.get(0).getString(Constants.kMethod));
+            } catch (JSONException je) {
+                je.printStackTrace();
+            }
         }
     }
 
@@ -592,13 +590,10 @@ public class GATTIP implements ServiceConnection {
 
     // method to call request coming from client
     public void request(String gattipMesg) {
-        Log.d("request",gattipMesg);
-
         if (gattipMesg == null) {
             invalidRequest();
             return;
         }
-
         try {
             // for handling multiple commands from client
             JSONObject reqObj = new JSONObject(gattipMesg);
@@ -610,13 +605,7 @@ public class GATTIP implements ServiceConnection {
                 String method = reqObj.getString(Constants.kMethod);
                 String[] request = method.split(",");
 
-                mMessage = method;
-                if(isRequestExist == true) {
-                    isRequestExist = false;
-                    messageQueue.add(reqObj);
-                }
-
-                if (mMessage == null) {
+                if (method == null) {
                     try {
                         JSONObject errorObj = new JSONObject();
                         errorObj.put(Constants.kCode,Constants.kInvalidRequest);
@@ -630,11 +619,15 @@ public class GATTIP implements ServiceConnection {
 
                      return;
                 }
-                if(messageQueue.size() >= 1 && isRequsetProcess == true) {
-                    isRequsetProcess = false;
-                    requestMethod(reqObj, mMessage);
-                } else {
-                    requestMethod(reqObj, mMessage);
+                if(method != null && method.equals(Constants.kGetCharacteristicValue) || method.equals(Constants.kWriteCharacteristicValue)) {
+                    messageQueue.add(reqObj);
+                }
+
+                if(messageQueue.size() > 0 && isRequestExist) {
+                    isRequestExist = false;
+                    requestMethod(reqObj, method);
+                } else if(isRequestExist){
+                    requestMethod(reqObj, method);
                 }
             }
         } catch (JSONException e) {
@@ -643,43 +636,43 @@ public class GATTIP implements ServiceConnection {
     }
 
     public void requestMethod(JSONObject reqObj ,String message) {
-        if (mMessage.equals(Constants.kConfigure)) {
+        if (message.equals(Constants.kConfigure)) {
             configure(reqObj);
-        } else if (mMessage.equals(Constants.kConnect)) {
+        } else if (message.equals(Constants.kConnect)) {
             connectStick(reqObj);
-        } else if (mMessage.equals(Constants.kDisconnect)) {
+        } else if (message.equals(Constants.kDisconnect)) {
             disconnectStick(reqObj);
-        } else if (mMessage.equals(Constants.kGetPerhipheralsWithServices)) {
+        } else if (message.equals(Constants.kGetPerhipheralsWithServices)) {
             getPerhipheralsWithServices(reqObj);
-        } else if (mMessage.equals(Constants.kGetPerhipheralsWithIdentifiers)) {
+        } else if (message.equals(Constants.kGetPerhipheralsWithIdentifiers)) {
             getPerhipheralsWithIdentifiers(reqObj);
-        } else if (mMessage.equals(Constants.kScanForPeripherals)) {
+        } else if (message.equals(Constants.kScanForPeripherals)) {
             scanForPeripherals(reqObj);
-        } else if (mMessage.equals(Constants.kStopScanning)) {
+        } else if (message.equals(Constants.kStopScanning)) {
             stopScanning(reqObj);
-        } else if (mMessage.equals(Constants.kCentralState)) {
+        } else if (message.equals(Constants.kCentralState)) {
             getConnectionState(reqObj);
-        } else if (mMessage.equals(Constants.kGetConnectedPeripherals)) {
+        } else if (message.equals(Constants.kGetConnectedPeripherals)) {
             getConnectedPeripherals(reqObj);
-        } else if (mMessage.equals(Constants.kGetServices)) {
+        } else if (message.equals(Constants.kGetServices)) {
             getServices(reqObj);
-        } else if (mMessage != null && mMessage.equals(Constants.kGetIncludedServices)) {
+        } else if (message != null && message.equals(Constants.kGetIncludedServices)) {
             getIncludedServices(reqObj);
-        } else if (mMessage.equals(Constants.kGetCharacteristics)) {
+        } else if (message.equals(Constants.kGetCharacteristics)) {
             getCharacteristics(reqObj);
-        } else if (mMessage.equals(Constants.kGetDescriptors)) {
+        } else if (message.equals(Constants.kGetDescriptors)) {
             getDescriptors(reqObj);
-        } else if (mMessage.equals(Constants.kGetCharacteristicValue)) {
+        } else if (message.equals(Constants.kGetCharacteristicValue)) {
             getCharacteristicValue(reqObj);
-        } else if (mMessage.equals(Constants.kGetDescriptorValue)) {
+        } else if (message.equals(Constants.kGetDescriptorValue)) {
             getDescriptorValue(reqObj);
-        } else if (mMessage.equals(Constants.kWriteCharacteristicValue)) {
+        } else if (message.equals(Constants.kWriteCharacteristicValue)) {
             writeCharacteristicValue(reqObj);
-        } else if (mMessage.equals(Constants.kSetValueNotification)) {
+        } else if (message.equals(Constants.kSetValueNotification)) {
             setValueNotification(reqObj);
-        } else if (mMessage.equals(Constants.kGetPeripheralState)) {
+        } else if (message.equals(Constants.kGetPeripheralState)) {
             getPeripheralState(reqObj);
-        } else if (mMessage.equals(Constants.kGetRSSI)) {
+        } else if (message.equals(Constants.kGetRSSI)) {
             getRSSI(reqObj);
         } else {
             try {
@@ -841,9 +834,8 @@ public class GATTIP implements ServiceConnection {
             sendReasonForFailedCall();
             return;
         }
-        final ArrayList<String> serviceList = new ArrayList<String>();
+        serviceList.clear();
         JSONObject params = null;
-
         if(reqObj.has(Constants.kParams)) {
             try {
                 params = reqObj.getJSONObject(Constants.kParams);
@@ -881,7 +873,6 @@ public class GATTIP implements ServiceConnection {
                 } else {
                     mAvailableDevices.add(device);
                 }
-
                 if(serviceList.size()>0) {
                     int count = 0;
 
@@ -957,6 +948,15 @@ public class GATTIP implements ServiceConnection {
             sendReasonForFailedCall();
             return;
         }
+        JSONObject response = new JSONObject();
+        JSONObject params = new JSONObject();
+        try {
+            response.put(Constants.kResult, Constants.kStopScanning);
+            sendResponse(response);
+        } catch (JSONException je) {
+            je.printStackTrace();
+        }
+
         mLeScanner.stopLEScan();
     }
 
@@ -1178,11 +1178,9 @@ public class GATTIP implements ServiceConnection {
             List<JSONObject> listOfCharacteristics = Util.listOfJsonCharacteristicsFrom(requestedService.getCharacteristics());
             JSONObject parameters = new JSONObject();
             JSONObject response = new JSONObject();
-
             parameters.put(Constants.kPeripheralUUID, bGatt.getDevice().getAddress());
             parameters.put(Constants.kServiceUUID, serviceUUIDString);
             parameters.put(Constants.kCharacteristics, new JSONArray(listOfCharacteristics));
-
             response.put(Constants.kResult, Constants.kGetCharacteristics);
             response.put(Constants.kParams, parameters);
 
@@ -1220,19 +1218,14 @@ public class GATTIP implements ServiceConnection {
                         return;
                     }
                     List<JSONObject> descriptorArray = Util.listOfJsonDescriptorsFrom(characteristic.getDescriptors());
-                    String characteristicUUIDString = characteristic.getUuid().toString().toUpperCase(Locale.getDefault());
-
                     String peripheralUUIDString = gatt.getDevice().getAddress();
                     String serviceUUIDString = sCBUUID.toUpperCase(Locale.getDefault());
-
                     JSONObject parameters = new JSONObject();
                     JSONObject response = new JSONObject();
-
                     parameters.put(Constants.kCharacteristicUUID, characteristicsUUIDString);
                     parameters.put(Constants.kPeripheralUUID, peripheralUUIDString);
                     parameters.put(Constants.kServiceUUID, serviceUUIDString);
                     parameters.put(Constants.kDescriptors, new JSONArray(descriptorArray));
-
                     response.put(Constants.kResult, Constants.kGetDescriptors);
                     response.put(Constants.kParams, parameters);
 
@@ -1264,13 +1257,11 @@ public class GATTIP implements ServiceConnection {
 
                     for (BluetoothGatt bGatt : keySet) {
                         BluetoothGattCharacteristic characteristic = characteristics.get(bGatt);
-
                         if (characteristic == null) {
                             sendCharacteristicNotFoundErrorMessage();
                             return;
                         }
-
-                        mService.readCharacteristicValue(bGatt, characteristic);
+                      mService.readCharacteristicValue(bGatt, characteristic);
                     }
                 } else {
                     invalidParameters(Constants.kGetCharacteristicValue);
@@ -1708,6 +1699,14 @@ public class GATTIP implements ServiceConnection {
                 }
             } else if(action.equals(BluetoothDevice.ACTION_BOND_STATE_CHANGED)) {
                 final int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
+
+                if(state == BluetoothDevice.BOND_BONDING) {
+                    Log.v("bonding","*******state bonding");
+                } else if(state == BluetoothDevice.BOND_BONDED) {
+                    Log.v("bondes","******state bonded");
+                } else if(state == BluetoothDevice.BOND_NONE) {
+                    Log.v("none","***** no bonding");
+                }
 
             }
         }
