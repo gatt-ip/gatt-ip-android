@@ -1,1418 +1,598 @@
 package org.gatt_ip;
 
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
-import android.bluetooth.BluetoothGattCharacteristic;
-import android.bluetooth.BluetoothGattDescriptor;
-import android.bluetooth.BluetoothGattService;
-import android.bluetooth.BluetoothManager;
-import android.content.BroadcastReceiver;
+
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.ServiceConnection;
-import android.content.pm.PackageManager;
-import android.os.Build;
-import android.os.Handler;
 import android.os.IBinder;
-import android.os.Looper;
-import android.os.SystemClock;
 import android.util.Log;
 
-import org.gatt_ip.lescanner.BluetoothLEScanner;
-import org.gatt_ip.lescanner.BluetoothLEScannerForLollipop;
-import org.gatt_ip.lescanner.BluetoothLEScannerForMR2;
+import org.gatt_ip.util.Util;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.UnsupportedEncodingException;
+
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
-import java.util.ListIterator;
 import java.util.Locale;
-import java.util.Set;
-import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 
-public class GATTIP implements ServiceConnection {
+public class GATTIP implements ServiceConnection, DeviceEventListener
+{
+    private static final String TAG = GATTIP.class.getName();
+    private static final int MAX_NUMBER_OF_REQUESTS = 30;
 
-    private static final int MAX_NUMBER_OF_REQUESTS = 60;
-    private ArrayList<BluetoothGatt> mConnectedDevices;
-    private Context mContext;
-    static GATTIPListener listener;
-    private BluetoothAdapter mBluetoothAdapter;
-    private List<BluetoothDevice> mAvailableDevices;
-    private BluetoothLEScanner mLeScanner;
-    private String mAddress;
-    private BluetoothService mService;
-    private BluetoothLEScanner.LEScanListener mLeScanlistener;
-    private String sCBUUID;
-    public static int scanning = 0;
-    private boolean mNotifications;
-    private static boolean BTConnect = true;
-    private static List<JSONObject> messageQueue = new ArrayList<JSONObject>();
     private static boolean isRequestExist = true;
-    final ArrayList<String> serviceList = new ArrayList<String>();
 
-    public GATTIP(Context ctx) {
-        mContext = ctx;
-        previousRequests = new ArrayList<JSONObject>();
-        mAvailableDevices = new ArrayList<BluetoothDevice>();
-        mConnectedDevices = new ArrayList<BluetoothGatt>();
-        mContext.bindService(new Intent(mContext, BluetoothService.class), this, 0);
-        mContext.startService(new Intent(mContext, BluetoothService.class));
-    }
+    private final ScheduledExecutorService worker = Executors.newScheduledThreadPool(1);
+
+    private Context m_context;
+
+    private GATTIPListener m_listener;
+
+    private LinkedBlockingQueue<JSONObject> m_message_queue;
+
+    private BluetoothLEService m_service;
+
+    private List<String> m_filtered_services;
+
+    private boolean m_notifications;
+
+    private JSONObject m_current_request;
+
+    private ScheduledFuture<?> m_time_error_future;
+    protected final ArrayList<DeviceEventListener> m_listeners = new ArrayList<>();
+
+    private static Boolean m_isNotifying;
+
+    /*
+     * ServiceConnection Implementation
+     */
 
     @Override
-    public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
+    public void onServiceConnected(ComponentName componentName, IBinder iBinder)
+    {
         try {
-            mService = ((BluetoothService.BluetoothBinder) iBinder).getService();
-            mService.registerListener(bluetoothListener);
-            if(mContext != null)
-                mContext.registerReceiver(bReceiver, new IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED));
+            m_service = (BluetoothLEService) ((BluetoothLEService.BluetoothLEBinder) iBinder).getService();
+            m_service.registerDeviceEventListener(this);
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
     @Override
-    public void onServiceDisconnected(ComponentName componentName) {
+    public void onServiceDisconnected(ComponentName componentName)
+    {
         try {
-            if(mLeScanner != null) {
-                mLeScanner.stopLEScan();
-                scanning = 0;
+            if(m_context != null) {
+                m_context.unbindService(this);
             }
-            if(mContext != null) {
-                mContext.unregisterReceiver(bReceiver);
-                mContext.unbindService(this);
-            }
-            if(mService != null) {
-                mService.unregisterListener(bluetoothListener);
-                mService = null;
+            if(m_service != null) {
+                m_service.unregisterDeviceEventListener(this);
+                m_service = null;
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    public ArrayList<BluetoothGatt> getConnectedDevices() {
-        return mConnectedDevices;
-    }
-
-    // set the reference for listener when we got request from client
-    public void setGATTIPListener(GATTIPListener GATTIPlistener) {
-        listener = GATTIPlistener;
-    }
-
-    // sending response to client for requested command
-    public void sendResponse(JSONObject jsonData) {
-        // handle log messages to display in LogView
-        handleLoggingRequestAndResponse(jsonData);
-
-        if (listener == null) {
-            return;
-        }
-        try {
-            jsonData.put(Constants.kJsonrpc, Constants.kJsonrpcVersion);
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
-        try {
-            for(int i = 0; i < messageQueue.size(); i++) {
-                JSONObject reqObj = messageQueue.get(i);
-                String request = reqObj.getString(Constants.kMethod);
-                String response = jsonData.getString(Constants.kResult);
-                JSONObject requestParams = reqObj.getJSONObject(Constants.kParams);
-                JSONObject responseParams = jsonData.getJSONObject(Constants.kParams);
-                if(request.equals(response) && requestParams.getString(Constants.kCharacteristicUUID).equals(responseParams.getString(Constants.kCharacteristicUUID))) {
-                    messageQueue.remove(i);
-                    isRequestExist = true;
-                    break;
-                }
-            }
-        } catch (JSONException je) {
-            je.printStackTrace();
-        }
-        listener.response(jsonData.toString());
-        //handle multiple commands
-        if (messageQueue.size() > 0 && isRequestExist) {
-            try {
-                requestMethod(messageQueue.get(0), messageQueue.get(0).getString(Constants.kMethod));
-            } catch (JSONException je) {
-                je.printStackTrace();
-            }
-        }
-    }
-
-    BluetoothListener bluetoothListener = new BluetoothListener() {
-
-        @Override
-        public void connectLEDevice(BluetoothGatt gatt){
-            JSONObject parameters = new JSONObject();
-            JSONObject response = new JSONObject();
-            BluetoothDevice device = gatt.getDevice();
-
-            if (mConnectedDevices.contains(gatt)) {
-                for (int i = 0; i < mConnectedDevices.size(); i++) {
-                    if (mConnectedDevices.get(i).equals(gatt))
-                        mConnectedDevices.set(i, mConnectedDevices.get(i));
-                }
-            } else {
-                mConnectedDevices.add(gatt);
-            }
-
-            // send connected response to client
-            try {
-                parameters.put(Constants.kPeripheralUUID,device.getAddress());
-                if(device.getName() != null)
-                    parameters.put(Constants.kPeripheralName, device.getName());
-                else
-                    parameters.put(Constants.kPeripheralName, "");
-                response.put(Constants.kResult, Constants.kConnect);
-                response.put(Constants.kParams, parameters);
-                sendResponse(response);
-            } catch (JSONException je) {
-                je.printStackTrace();
-            }
-        }
-
-        @Override
-        public void disconnectLEDevice(BluetoothGatt gatt){
-            JSONObject parameters = new JSONObject();
-            JSONObject response = new JSONObject();
-            BluetoothDevice device = gatt.getDevice();
-            // send response to client
-            try {
-                // get the json data to send client
-                parameters.put(Constants.kPeripheralUUID,device.getAddress());
-                if(device.getName() != null)
-                    parameters.put(Constants.kPeripheralName, device.getName());
-                else
-                    parameters.put(Constants.kPeripheralName, "");
-                response.put(Constants.kResult, Constants.kDisconnect);
-                response.put(Constants.kParams, parameters);
-                sendResponse(response);
-            } catch (JSONException je) {
-                je.printStackTrace();
-            }
-            // delete connected device from list after disconnect device.
-            if (mConnectedDevices.contains(gatt)) {
-                for (int i = 0; i < mConnectedDevices.size(); i++) {
-                    if (mConnectedDevices.get(i).equals(gatt))
-                       mConnectedDevices.remove(i);
-                 }
-            }
-        }
-
-        @Override
-        public void connectionFailed(BluetoothGatt gatt){
-            JSONObject response = new JSONObject();
-            JSONObject errorCode = new JSONObject();
-            JSONObject parameters = new JSONObject();
-            try {
-                errorCode.put(Constants.kCode, Constants.kError32603);
-                errorCode.put(Constants.kMessageField, "failed to connect");
-                parameters.put(Constants.kPeripheralUUID, gatt.getDevice().getAddress());
-                response.put(Constants.kParams, parameters);
-                response.put(Constants.kResult, Constants.kConnect);
-                response.put(Constants.kError, errorCode);
-
-                sendResponse(response);
-            } catch (JSONException e) {
-                e.printStackTrace();
-            }
-        }
-
-        @Override
-        public void getLEServices(BluetoothGatt gatt, int status){
-            JSONObject response = new JSONObject();
-            JSONObject errorCode = new JSONObject();
-            JSONObject parameters = new JSONObject();
-
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
-                List<JSONObject> services = Util.listOfJsonServicesFrom(gatt.getServices());
-                try {
-                    parameters.put(Constants.kPeripheralUUID,peripheralUUIDString);
-                    parameters.put(Constants.kServices, new JSONArray(services));
-
-                    response.put(Constants.kResult, Constants.kGetServices);
-                    response.put(Constants.kParams, parameters);
-
-                    sendResponse(response);
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                }
-            } else {
-                try {
-                    errorCode.put(Constants.kCode, Constants.kError32603);
-                    errorCode.put(Constants.kMessageField, "failed to get services");
-                    parameters.put(Constants.kPeripheralUUID, gatt.getDevice().getAddress());
-                    response.put(Constants.kParams, parameters);
-                    response.put(Constants.kResult, Constants.kGetServices);
-                    response.put(Constants.kError, errorCode);
-
-                    sendResponse(response);
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-
-        @Override
-        public void readCharacteristicValue(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status){
-            String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getUuid().toString().toUpperCase(Locale.getDefault()));
-            if(status == BluetoothGatt.GATT_SUCCESS) {
-                JSONObject response = new JSONObject();
-                JSONObject parameters = new JSONObject();
-
-                byte[] characteristicValue = characteristic.getValue();
-                String characteristicValueString = Util.byteArrayToHex(characteristicValue);
-
-                try {
-                    String characteristicProperty = "" + characteristic.getProperties();
-                    String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
-                    String serviceUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getService().getUuid().toString().toUpperCase(Locale.getDefault()));
-                    int characteristicIsNotifying;
-
-                    if (mNotifications)
-                        characteristicIsNotifying = 1;
-                    else
-                        characteristicIsNotifying = 0;
-
-                    parameters.put(Constants.kIsNotifying, characteristicIsNotifying);
-                    parameters.put(Constants.kProperties, characteristicProperty);
-                    parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
-                    parameters.put(Constants.kPeripheralUUID, peripheralUUIDString);
-                    parameters.put(Constants.kServiceUUID, serviceUUIDString);
-                    parameters.put(Constants.kValue, characteristicValueString);
-
-                    response.put(Constants.kResult, Constants.kGetCharacteristicValue);
-                    response.put(Constants.kParams, parameters);
-
-                    sendResponse(response);
-
-                    return;
-                } catch (JSONException je) {
-                    je.printStackTrace();
-                }
-                try {
-                    JSONObject errorCode = new JSONObject();
-
-                    errorCode.put(Constants.kCode, Constants.kError32603);
-                    errorCode.put(Constants.kMessageField, "read data failed");
-
-                    parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
-                    response.put(Constants.kResult, Constants.kGetCharacteristicValue);
-
-                    response.put(Constants.kParams, parameters);
-                    response.put(Constants.kError, errorCode);
-
-                    sendResponse(response);
-                } catch (JSONException je) {
-                    je.printStackTrace();
-                }
-            } else if(status == BluetoothGatt.GATT_INSUFFICIENT_AUTHENTICATION || status == BluetoothGatt.GATT_INSUFFICIENT_ENCRYPTION) {
-                Log.v("oncharacteristic read","GATT insufficient");
-                try {
-                    JSONObject response = new JSONObject();
-                    JSONObject parameters = new JSONObject();
-                    JSONObject errorCode = new JSONObject();
-
-                    errorCode.put(Constants.kCode, Constants.kUnauthorized);
-                    errorCode.put(Constants.kMessageField, "authorization failed");
-
-                    parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
-
-                    response.put(Constants.kResult, Constants.kGetCharacteristicValue);
-                    response.put(Constants.kParams, parameters);
-                    response.put(Constants.kError, errorCode);
-
-                    sendResponse(response);
-                } catch (JSONException je) {
-                    je.printStackTrace();
-                }
-            }
-        }
-
-        @Override
-        public void writeCharacteristicValue(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, int status) {
-            String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getUuid().toString().toUpperCase(Locale.getDefault()));
-            String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
-
-            JSONObject parameters = new JSONObject();
-            JSONObject response = new JSONObject();
-
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                try {
-                    parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
-                    parameters.put(Constants.kPeripheralUUID, peripheralUUIDString);
-
-                    response.put(Constants.kResult, Constants.kWriteCharacteristicValue);
-                    response.put(Constants.kParams, parameters);
-
-                    sendResponse(response);
-                } catch (JSONException je) {
-                    je.printStackTrace();
-                }
-            } else {
-                // send error message when write characteristic not supported for
-                // specified data
-                try {
-                    JSONObject errorCode = new JSONObject();
-
-                    parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
-                    parameters.put(Constants.kPeripheralUUID, peripheralUUIDString);
-
-                    errorCode.put(Constants.kCode, Constants.kError32603);
-                    errorCode.put(Constants.kMessageField, "write data failed");
-
-                    response.put(Constants.kResult, Constants.kWriteCharacteristicValue);
-                    response.put(Constants.kParams, parameters);
-                    response.put(Constants.kError, errorCode);
-
-                    sendResponse(response);
-                } catch (JSONException je) {
-                    je.printStackTrace();
-                }
-            }
-        }
-
-        @Override
-        public void setValueNotification(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic) {
-            JSONObject response = new JSONObject();
-            JSONObject parameters = new JSONObject();
-            String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getUuid().toString().toUpperCase(Locale.getDefault()));
-            String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
-            String serviceUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getService().getUuid().toString().toUpperCase(Locale.getDefault()));
-            byte[] characteristicValue = characteristic.getValue();
-            String characteristicValueString = Util.byteArrayToHex(characteristicValue);
-            String characteristicProperty = "" + characteristic.getProperties();
-            int characteristicIsNotifying;
-
-            if (mNotifications)
-                characteristicIsNotifying = 1;
-            else
-                characteristicIsNotifying = 0;
-
-            try {
-                parameters.put(Constants.kIsNotifying, characteristicIsNotifying);
-                parameters.put(Constants.kProperties, characteristicProperty);
-                parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
-                parameters.put(Constants.kPeripheralUUID, peripheralUUIDString);
-                parameters.put(Constants.kServiceUUID, serviceUUIDString);
-                parameters.put(Constants.kValue, characteristicValueString);
-
-                response.put(Constants.kResult, Constants.kSetValueNotification);
-                response.put(Constants.kParams, parameters);
-
-                sendResponse(response);
-
-                return;
-            } catch (JSONException je) {
-                je.printStackTrace();
-            }
-            // error occur when we set notification for a characteristic
-            try {
-                JSONObject errorCode = new JSONObject();
-
-                parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
-                parameters.put(Constants.kServiceUUID, serviceUUIDString);
-                parameters.put(Constants.kPeripheralUUID, peripheralUUIDString);
-
-                errorCode.put(Constants.kCode, Constants.kError32603);
-                errorCode.put(Constants.kMessageField, "write data failed");
-
-                response.put(Constants.kResult, Constants.kSetValueNotification);
-                response.put(Constants.kParams, parameters);
-                response.put(Constants.kError, errorCode);
-
-                sendResponse(response);
-            } catch (JSONException e) {
-                e.printStackTrace();
-            }
-        }
-
-        @Override
-        public void readDescriptorValue(BluetoothGatt gatt,BluetoothGattDescriptor descriptor, int status){
-            JSONObject response = new JSONObject();
-            JSONObject parameters = new JSONObject();
-            String desriptorUUID = Util.ConvertUUID_128bitInto16bit(descriptor.getUuid().toString());
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                byte[] byteValue = descriptor.getValue();
-                try {
-                    String descriptorValue = new String(byteValue, "UTF-8");
-                    parameters.put(Constants.kDescriptorUUID, desriptorUUID);
-                    parameters.put(Constants.kValue, descriptorValue);
-                    response.put(Constants.kResult,Constants.kGetDescriptorValue);
-                    response.put(Constants.kParams, parameters);
-                    sendResponse(response);
-                    return;
-                } catch (UnsupportedEncodingException e) {
-                    e.printStackTrace();
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                }
-            }
-
-            try {
-                JSONObject errorObj = new JSONObject();
-                errorObj.put(Constants.kCode, Constants.kError32603);
-                errorObj.put(Constants.kMessageField, "");
-                parameters.put(Constants.kDescriptorUUID, desriptorUUID);
-                response.put(Constants.kResult, Constants.kGetDescriptorValue);
-                response.put(Constants.kError, errorObj);
-                response.put(Constants.kParams, parameters);
-                sendResponse(response);
-            } catch (JSONException e) {
-                e.printStackTrace();
-            }
-        }
-
-        @Override
-        public void writeDescriptorValue(BluetoothGatt gatt,BluetoothGattDescriptor descriptor, int status){
-            // Temp comment
-			/*
-			 * JSONObject response = new JSONObject(); if (status ==
-			 * BluetoothGatt.GATT_SUCCESS) { try { String desriptorUUID =
-			 * descriptor.getUuid().toString(); String peripheralUUIDString =
-			 * gatt.getDevice().getAddress();
-			 * response.put(Constants.kResult,Constants.kWriteDescriptorValue);
-			 * response.put(Constants.kDescriptorUUID, desriptorUUID);
-			 * response.put(Constants.kPeripheralUUID,peripheralUUIDString);
-			 * sendResponse(response, null); return; } catch (JSONException e) {
-			 * e.printStackTrace(); } } JSONObject errorObj = new JSONObject();
-			 * try { errorObj.put(Constants.kCode, Constants.kError32603);
-			 * errorObj.put(Constants.kMessageField, "");
-			 * response.put(Constants.kResult, Constants.kWriteDescriptorValue);
-			 * response.put(Constants.kError, errorObj); sendResponse(response,
-			 * null); } catch (JSONException e) { e.printStackTrace(); }
-			 */
-
-            if (!mNotifications) {
-                BluetoothGattCharacteristic characteristic = descriptor.getCharacteristic();
-                JSONObject response = new JSONObject();
-                String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getUuid().toString().toUpperCase(Locale.getDefault()));
-                String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
-                String serviceUUIDString = Util.ConvertUUID_128bitInto16bit(characteristic.getService().getUuid().toString().toUpperCase(Locale.getDefault()));
-                String characteristicValueString = Util.byteArrayToHex(characteristic.getValue());
-                String characteristicProperty = ""+ characteristic.getProperties();
-                int characteristicIsNotifying;
-
-                if (mNotifications)
-                    characteristicIsNotifying = 1;
-                else
-                    characteristicIsNotifying = 0;
-
-                JSONObject parameters = new JSONObject();
-
-                try {
-                    parameters.put(Constants.kIsNotifying,characteristicIsNotifying);
-                    parameters.put(Constants.kProperties,characteristicProperty);
-                    parameters.put(Constants.kCharacteristicUUID,characteristicUUIDString);
-                    parameters.put(Constants.kPeripheralUUID,peripheralUUIDString);
-                    parameters.put(Constants.kServiceUUID, serviceUUIDString);
-                    parameters.put(Constants.kValue, characteristicValueString);
-
-                    response.put(Constants.kResult,Constants.kGetCharacteristicValue);
-                    response.put(Constants.kParams, parameters);
-
-                    sendResponse(response);
-
-                    return;
-                } catch (JSONException je) {
-                    je.printStackTrace();
-                }
-                // error occur when we set notification for a characteristic
-                try {
-                    parameters.put(Constants.kCharacteristicUUID,characteristicUUIDString);
-                    parameters.put(Constants.kServiceUUID, serviceUUIDString);
-                    parameters.put(Constants.kPeripheralUUID,peripheralUUIDString);
-                    JSONObject errorCode = new JSONObject();
-                    errorCode.put(Constants.kCode, Constants.kError32603);
-                    errorCode.put(Constants.kMessageField, "write data failed");
-                    response.put(Constants.kResult,Constants.kSetValueNotification);
-                    response.put(Constants.kParams, parameters);
-                    response.put(Constants.kError, errorCode);
-                    sendResponse(response);
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-
-        @Override
-        public void readRemoteRssi(BluetoothGatt gatt, int rssi, int status){
-            JSONObject response = new JSONObject();
-            JSONObject parameters = new JSONObject();
-            String peripheralUUIDString = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
-            BluetoothDevice device = gatt.getDevice();
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                try {
-                    response.put(Constants.kResult, Constants.kGetRSSI);
-                    parameters.put(Constants.kPeripheralUUID,peripheralUUIDString);
-                    if(device.getName() != null)
-                        parameters.put(Constants.kPeripheralName, device.getName());
-                    else
-                        parameters.put(Constants.kPeripheralName, "");
-                    parameters.put(Constants.kRSSIkey, rssi);
-                    response.put(Constants.kParams, parameters);
-                    sendResponse(response);
-                    return;
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                }
-            }
-
-            try {
-                JSONObject errorObj = new JSONObject();
-                errorObj.put(Constants.kCode, Constants.kError32603);
-                errorObj.put(Constants.kMessageField, "");
-                parameters.put(Constants.kPeripheralUUID,peripheralUUIDString);
-                if(device.getName() != null)
-                    parameters.put(Constants.kPeripheralName, device.getName());
-                else
-                    parameters.put(Constants.kPeripheralName, "");
-                response.put(Constants.kResult, Constants.kGetRSSI);
-                response.put(Constants.kError, errorObj);
-                response.put(Constants.kParams, parameters);
-                sendResponse(response);
-            } catch (JSONException e) {
-                e.printStackTrace();
-            }
-        }
-
-    };
-
-    // method to call request coming from client
-    public void request(String gattipMesg) {
-        if (gattipMesg == null) {
-            invalidRequest();
-            return;
-        }
-        try {
-            // for handling multiple commands from client
-            JSONObject reqObj = new JSONObject(gattipMesg);
-
-            // handle log messages to display in LogView
-            handleLoggingRequestAndResponse(reqObj);
-
-            if (reqObj != null) {
-                String method = reqObj.getString(Constants.kMethod);
-                String[] request = method.split(",");
-
-                if (method == null) {
-                    try {
-                        JSONObject errorObj = new JSONObject();
-                        errorObj.put(Constants.kCode,Constants.kInvalidRequest);
-                        JSONObject jsonData = new JSONObject();
-                        jsonData.put(Constants.kError, errorObj);
-                        jsonData.put(Constants.kIdField, null);
-                        sendResponse(jsonData);
-                    } catch (JSONException je) {
-                        je.printStackTrace();
-                    }
-
-                     return;
-                }
-                if(method != null && method.equals(Constants.kGetCharacteristicValue) || method.equals(Constants.kWriteCharacteristicValue)) {
-                    messageQueue.add(reqObj);
-                }
-
-                if(messageQueue.size() > 0 && isRequestExist) {
-                    isRequestExist = false;
-                    requestMethod(reqObj, method);
-                } else if(isRequestExist){
-                    requestMethod(reqObj, method);
-                }
-            }
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void requestMethod(JSONObject reqObj ,String message) {
-        if (message.equals(Constants.kConfigure)) {
-            configure(reqObj);
-        } else if (message.equals(Constants.kConnect)) {
-            connectStick(reqObj);
-        } else if (message.equals(Constants.kDisconnect)) {
-            disconnectStick(reqObj);
-        } else if (message.equals(Constants.kGetPerhipheralsWithServices)) {
-            getPerhipheralsWithServices(reqObj);
-        } else if (message.equals(Constants.kGetPerhipheralsWithIdentifiers)) {
-            getPerhipheralsWithIdentifiers(reqObj);
-        } else if (message.equals(Constants.kScanForPeripherals)) {
-            scanForPeripherals(reqObj);
-        } else if (message.equals(Constants.kStopScanning)) {
-            stopScanning(reqObj);
-        } else if (message.equals(Constants.kCentralState)) {
-            getConnectionState(reqObj);
-        } else if (message.equals(Constants.kGetConnectedPeripherals)) {
-            getConnectedPeripherals(reqObj);
-        } else if (message.equals(Constants.kGetServices)) {
-            getServices(reqObj);
-        } else if (message != null && message.equals(Constants.kGetIncludedServices)) {
-            getIncludedServices(reqObj);
-        } else if (message.equals(Constants.kGetCharacteristics)) {
-            getCharacteristics(reqObj);
-        } else if (message.equals(Constants.kGetDescriptors)) {
-            getDescriptors(reqObj);
-        } else if (message.equals(Constants.kGetCharacteristicValue)) {
-            getCharacteristicValue(reqObj);
-        } else if (message.equals(Constants.kGetDescriptorValue)) {
-            getDescriptorValue(reqObj);
-        } else if (message.equals(Constants.kWriteCharacteristicValue)) {
-            writeCharacteristicValue(reqObj);
-        } else if (message.equals(Constants.kSetValueNotification)) {
-            setValueNotification(reqObj);
-        } else if (message.equals(Constants.kGetPeripheralState)) {
-            getPeripheralState(reqObj);
-        } else if (message.equals(Constants.kGetRSSI)) {
-            getRSSI(reqObj);
-        } else {
-            try {
-                JSONObject invalidMethod = new JSONObject();
-                invalidMethod.put("Error", "Your Method is invalid");
-                sendResponse(invalidMethod);
-            } catch (JSONException je) {
-                je.printStackTrace();
-            }
-        }
-    }
-
-    public void configure(JSONObject reqObj) {
-
-        if(mConnectedDevices != null) {
-            for(int i = 0; i < mConnectedDevices.size(); i++) {
-                BluetoothGatt gatt = mConnectedDevices.get(i);
-                if(mService != null && gatt != null) {
-                    mService.disconnectLEDevice(gatt);
-                }
-            }
-        }
-
-        if(messageQueue != null) {
-            for(int j = 0; j < messageQueue.size(); j++) {
-                messageQueue.remove(j);
-            }
-        }
-
-        JSONObject response = new JSONObject();
-
-        try {
-            response.put(Constants.kResult, Constants.kConfigure);
-            getState();
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
-
-        sendResponse(response);
-    }
-
-    public void getState() {
-        JSONObject parameters = new JSONObject();
-        JSONObject response = new JSONObject();
-        String stateString;
-        PackageManager manager = mContext.getPackageManager();
-
-        final BluetoothManager bluetoothManager = (BluetoothManager) mContext.getSystemService(Context.BLUETOOTH_SERVICE);
-        mBluetoothAdapter = bluetoothManager.getAdapter();
-
-        if (mBluetoothAdapter == null) {
-            stateString = Constants.kUnknown;
-        } else if (!manager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)) {
-            stateString = Constants.kUnsupported;
-        } else {
-            stateString = Util.centralStateStringFromCentralState(mBluetoothAdapter.getState());
-        }
-
-        try {
-            parameters.put(Constants.kState, stateString);
-
-            response.put(Constants.kParams, parameters);
-            response.put(Constants.kResult, Constants.kCentralState);
-
-            sendResponse(response);
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void getPerhipheralsWithServices(JSONObject reqObj) {
-        if (!isPoweredOn()) {
-            sendReasonForFailedCall();
-            return;
-        }
-        //extract the list of service UUID strings
-        if(reqObj.has(Constants.kParams)) {
-            try {
-                JSONObject params = reqObj.getJSONObject(Constants.kParams);
-                if(params != null && params.has(Constants.kServiceUUIDs)) {
-                    JSONArray listOfServiceUUIDStrings = params.getJSONArray(Constants.kServiceUUIDs);
-                    if(listOfServiceUUIDStrings.length() == 0) {
-                        sendNoServiceSpecified();
-                        return;
-                    }
-                    List<String> listOfServcieUUIDStrings = Util.listOfServiceUUIDStringsFrom(listOfServiceUUIDStrings);
-                    List<BluetoothGatt> listOfperipheralsWithServices = Util.retrieveConnectedPeripheralsWithServices(mConnectedDevices, listOfServcieUUIDStrings);
-                    JSONObject response = new JSONObject();
-                    response.put(Constants.kResult, Constants.kGetPerhipheralsWithServices);
-                    JSONObject peripheralsObject = new JSONObject();
-                    JSONObject peripheralObject;
-                    for(int i = 0; i < listOfperipheralsWithServices.size(); i++) {
-                        BluetoothGatt gatt = listOfperipheralsWithServices.get(i);
-                        String peripheralState = Util.peripheralStateStringFromPeripheralState(gatt);
-                        String peripheralUUIDString = Util.peripheralUUIDStringFromPeripheral(gatt.getDevice());
-                        peripheralObject = new JSONObject();
-                        peripheralObject.put(Constants.kStateField, peripheralState);
-                        peripheralObject.put(Constants.kPeripheralUUID, peripheralUUIDString);
-                        peripheralsObject.put(Integer.toString(i), peripheralObject);
-                    }
-                    response.put(Constants.kPeripherals, peripheralsObject);
-                    sendResponse(response);
-                } else {
-                    invalidParameters(Constants.kGetPerhipheralsWithServices);
-                }
-            } catch (JSONException je) {
-                je.printStackTrace();
-            }
-        } else {
-            invalidParameters(Constants.kGetPerhipheralsWithServices);
-        }
-    }
-
-    public void getPerhipheralsWithIdentifiers(JSONObject reqObj) {
-        if (!isPoweredOn()) {
-            sendReasonForFailedCall();
-            return;
-        }
-        //extract the list of service UUID strings
-        if (reqObj.has(Constants.kParams)) {
-            try {
-                JSONObject params = reqObj.getJSONObject(Constants.kParams);
-                if (params != null && params.has(Constants.kPeripheralUUIDs)) {
-                    JSONArray listOfperipheralUUIDStrings = params.getJSONArray(Constants.kPeripheralUUIDs);
-                    if (listOfperipheralUUIDStrings.length() == 0) {
-                        sendNoPeripheralsSpecified();
-                        return;
-                    }
-                    List<String> listOfPeripheralUUIDStrings = Util.listOfPeripheralUUIDStringsFrom(listOfperipheralUUIDStrings);
-                    List<BluetoothGatt> peripheralsWithIdentifiers = Util.retrievePeripheralsWithIdentifiers(mConnectedDevices, listOfPeripheralUUIDStrings);
-                    JSONObject response = new JSONObject();
-                    response.put(Constants.kResult, Constants.kGetPerhipheralsWithIdentifiers);
-                    JSONObject peripheralsObject = new JSONObject();
-                    JSONObject peripheralObject;
-                    for(int i = 0; i < peripheralsWithIdentifiers.size(); i++) {
-                        BluetoothGatt gatt = peripheralsWithIdentifiers.get(i);
-                        String peripheralState = Util.peripheralStateStringFromPeripheralState(gatt);
-                        String peripheralUUIDString = Util.peripheralUUIDStringFromPeripheral(gatt.getDevice());
-                        peripheralObject = new JSONObject();
-                        peripheralObject.put(Constants.kStateField, peripheralState);
-                        peripheralObject.put(Constants.kPeripheralUUID, peripheralUUIDString);
-                        peripheralsObject.put(Integer.toString(i), peripheralObject);
-                    }
-                    response.put(Constants.kPeripherals, peripheralsObject);
-                    sendResponse(response);
-                } else {
-                    invalidParameters(Constants.kGetPerhipheralsWithIdentifiers);
-                }
-            } catch (JSONException je) {
-                je.printStackTrace();
-            }
-        } else {
-            invalidParameters(Constants.kGetPerhipheralsWithIdentifiers);
-        }
-    }
-
-    public void scanForPeripherals(JSONObject reqObj) {
-        if (!isPoweredOn()) {
-            sendReasonForFailedCall();
-            return;
-        }
-        serviceList.clear();
-        JSONObject params = null;
-        if(reqObj.has(Constants.kParams)) {
-            try {
-                params = reqObj.getJSONObject(Constants.kParams);
-
-                if(params.has(Constants.kScanOptionAllowDuplicatesKey)) {
-                    String duplicateKey = params.getString(Constants.kScanOptionAllowDuplicatesKey);
-                }
-                if(params.has(Constants.kServiceUUIDs)) {
-                    JSONArray servcieUUIDArray = params.getJSONArray(Constants.kServiceUUIDs);
-                    for(int i = 0; i<servcieUUIDArray.length(); i++) {
-                        serviceList.add(servcieUUIDArray.getString(i));
-                    }
-                }
-
-            } catch (JSONException je) {
-                je.printStackTrace();
-            }
-        } else {
-            invalidParameters(Constants.kScanForPeripherals);
-            return;
-        }
-
-        mLeScanlistener = new BluetoothLEScanner.LEScanListener() {
+    /*
+     * Public GATT-IP functions
+     */
+    public GATTIP(Context ctx)
+    {
+        m_message_queue = new LinkedBlockingQueue<>(MAX_NUMBER_OF_REQUESTS);
+
+        m_context = ctx;
+        m_context.bindService(new Intent(m_context, BluetoothLEService.class), this, 0);
+        m_context.startService(new Intent(m_context, BluetoothLEService.class));
+
+        m_filtered_services = new ArrayList<>();
+
+        final Thread processing_thread = new Thread() {
             @Override
-            public void onLeScan(BluetoothDevice device, int rssi,List<String> serviceUUIDs, JSONObject mutatedAdevertismentData) {
-                if(device == null) {
-                    return;
-                }
+            public void run() {
+                while (true) {
+                    try {
+//                        processRequest(m_message_queue.take());
+                        JSONObject request = m_message_queue.poll();
 
-                if (mAvailableDevices.contains(device)) {
-                    for (int i = 0; i < mAvailableDevices.size(); i++) {
-                        if (mAvailableDevices.get(i).equals(device))
-                            mAvailableDevices.set(i, device);
-                    }
-                } else {
-                    mAvailableDevices.add(device);
-                }
-                if(serviceList.size()>0) {
-                    int count = 0;
+                        if (request == null) {
+                            request = m_message_queue.take();
+                        }
 
-                    for (int i = 0; i < serviceUUIDs.size(); i++) {
-                       for (int j = 0; j < serviceList.size(); j++) {
-                           if (serviceUUIDs.get(i).contains(serviceList.get(j)) || serviceUUIDs.get(i).contains(serviceList.get(j))) {
-                                count++;
-                           }
-                       }
+                        processRequest(request);
+                    } catch (JSONException | InterruptedException e) {
+                        // TODO: perhaps properly handle InterruptedException
+                        throw new RuntimeException(e);
                     }
 
-                    if (count > 0) {
-                        // call response method here
-                        SendScanResponse(device, rssi, mutatedAdevertismentData);
+                    while (!isRequestExist) {
+                        try {
+                            Thread.sleep(50);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
                     }
-                }  else {
-                    SendScanResponse(device, rssi, mutatedAdevertismentData);
                 }
             }
         };
 
-       if(scanning > 0 && mLeScanner != null) {
-           mLeScanner.stopLEScan();
-           SystemClock.sleep(1000);
-       } else {
-           int apiVersion = android.os.Build.VERSION.SDK_INT;
-
-           if (apiVersion >= Build.VERSION_CODES.LOLLIPOP) {
-               mLeScanner = new BluetoothLEScannerForLollipop(mContext);
-           } else {
-               mLeScanner = new BluetoothLEScannerForMR2(mContext);
-           }
-
-           mLeScanner.registerScanListener(mLeScanlistener);
-       }
-
-        mLeScanner.startLEScan();
-
-        scanning++;
+        processing_thread.start();
     }
 
-    // Response method definition
+    // set the reference for listener when we got request from client
+    public void setGATTIPListener(GATTIPListener GATTIPlistener)
+    {
+        m_listener = GATTIPlistener;
+    }
 
-    public void SendScanResponse(BluetoothDevice device, int rssi, JSONObject mutatedAdevertismentData) {
-        try {
-            JSONObject response = new JSONObject();
-            JSONObject parameters = new JSONObject();
+    public boolean isPoweredOn()
+    {
+        return m_service.getServiceState() == InterfaceService.ServiceState.SERVICE_STATE_ACTIVE;
+    }
 
-            if(device.getAddress() != null) {
-                String btAddr = device.getAddress().replaceAll(":", "-");
-                parameters.put(Constants.kPeripheralBtAddress,btAddr);
-                parameters.put(Constants.kPeripheralUUID, device.getAddress());
-            }
-
-            parameters.put(Constants.kAdvertisementDataKey, mutatedAdevertismentData);
-            parameters.put(Constants.kRSSIkey, rssi);
-
-            if(device.getName() != null)
-                parameters.put(Constants.kPeripheralName, device.getName());
-            else
-                parameters.put(Constants.kPeripheralName,"Unknown");
-            response.put(Constants.kResult, Constants.kScanForPeripherals);
-            response.put(Constants.kParams, parameters);
-            sendResponse(response);
-        } catch (JSONException je) {
-            je.printStackTrace();
+    // method to call request coming from client
+    public void request(String gattipMesg) throws JSONException
+    {
+        if (gattipMesg == null) {
+            sendInvalidRequest();
+            return;
         }
 
+        try {
+            // for handling multiple commands from client
+            JSONObject request = new JSONObject(gattipMesg);
+
+            if (!m_message_queue.offer(request)) {
+                Log.d(TAG, "LinkedBlockingQueue.offer: capacity full.");
+
+                // If queue is full, we wait until we can add element.
+                m_message_queue.put(request);
+            }
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+//        TODO: Evaluate proper time out error.
+//        m_time_error_future = worker.schedule(m_time_out_error_thread, 10L, TimeUnit.SECONDS);
     }
 
-    public void stopScanning(JSONObject reqObj) {
-        if (!isPoweredOn()) {
-            sendReasonForFailedCall();
+    /*
+     * Private GATT-IP functions
+     */
+
+    private void sendResponse(JSONObject jsonData, boolean notification) throws JSONException
+    {
+        String request, response;
+
+
+        if (m_listener == null) {
             return;
+        }
+
+//        if (m_time_error_future != null) {
+//            m_time_error_future.cancel(true);
+//            m_time_error_future = null;
+//        }
+
+        jsonData.put(Constants.kJsonrpc, Constants.kJsonrpcVersion);
+
+
+        request = m_current_request.getString(Constants.kMethod);
+        response = jsonData.getString(Constants.kResult);
+
+        if (request.equals(response) && !notification) {
+            String requestID = getRequestID(m_current_request);
+
+            if (requestID != null) {
+                jsonData.put(Constants.kRequestId, requestID);
+            }
+
+            isRequestExist = true;
+        }
+        Log.v("response string", jsonData.toString());
+        m_listener.response(jsonData.toString());
+    }
+
+    // sending response to client for requested command
+    private void sendResponse(JSONObject jsonData) throws JSONException
+    {
+        sendResponse(jsonData, false);
+    }
+
+    private void processRequest(JSONObject request) throws JSONException
+    {
+        Log.d(TAG, "Processing GATT-IP request.");
+        String method = null;
+        isRequestExist = false;
+
+        m_current_request = request;
+
+        try {
+            method = m_current_request.getString(Constants.kMethod);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+
+        if (method == null) {
+            JSONObject errorObj = new JSONObject();
+            errorObj.put(Constants.kCode,Constants.kInvalidRequest);
+
+            JSONObject jsonData = new JSONObject();
+            jsonData.put(Constants.kError, errorObj);
+
+            String requestID = getRequestID(m_current_request);
+
+            if(requestID != null) {
+                jsonData.put(Constants.kRequestId, requestID);
+            }
+
+            sendResponse(jsonData);
+        } else switch (method) {
+            case Constants.kConfigure:
+                configure(request);
+                break;
+            case Constants.kConnect:
+                connectPeripheral(request);
+                break;
+            case Constants.kDisconnect:
+                disconnectPeripheral(request);
+                break;
+            case Constants.kScanForPeripherals:
+                scanForPeripherals(request);
+                break;
+            case Constants.kStopScanning:
+                stopScanning(request);
+                break;
+            case Constants.kCentralState:
+                getState();
+                break;
+            case Constants.kGetServices:
+                getServices(request);
+                break;
+            case Constants.kGetCharacteristics:
+                getCharacteristics(request);
+                break;
+            case Constants.kGetDescriptors:
+                getDescriptors(request);
+                break;
+            case Constants.kGetCharacteristicValue:
+                getCharacteristicValue(request);
+                break;
+            case Constants.kGetDescriptorValue:
+                getDescriptorValue(request);
+                break;
+            case Constants.kWriteDescriptorValue:
+                writeDescriptorValue(request);
+                break;
+            case Constants.kWriteCharacteristicValue:
+                writeCharacteristicValue(request);
+                break;
+            case Constants.kSetValueNotification:
+                setValueNotification(request);
+                break;
+            case Constants.kGetPeripheralState:
+                getPeripheralState(request);
+                break;
+            case Constants.kGetRSSI:
+                getRSSI(request);
+                break;
+            default:
+                JSONObject invalidMethod = new JSONObject();
+                invalidMethod.put("Error", "Your Method is invalid");
+                sendResponse(invalidMethod);
+                break;
+        }
+
+        Log.d(TAG, "Proccessing complete");
+    }
+
+    private void configure(JSONObject reqObj) throws JSONException   {
+    //        TODO: Needs to be discussed.
+        List<BluetoothGatt> connected_devices = m_service.getConnectedDevices();
+
+        for (int i = 0; i < connected_devices.size(); i++) {
+            BluetoothGatt gatt = connected_devices.get(i);
+            if (m_service != null && gatt != null) {
+                m_service.disconnectDevice(gatt.getDevice().getAddress());
+            }
         }
         JSONObject response = new JSONObject();
-        JSONObject params = new JSONObject();
-        try {
-            response.put(Constants.kResult, Constants.kStopScanning);
-            sendResponse(response);
-        } catch (JSONException je) {
-            je.printStackTrace();
-        }
-
-        mLeScanner.stopLEScan();
+        response.put(Constants.kResult, Constants.kConfigure);
+        isRequestExist = true;
+        sendResponse(response);
     }
 
-    public void connectStick(JSONObject reqObj) {
+    private void getState() throws JSONException
+    {
+        JSONObject parameters = new JSONObject();
+        JSONObject response = new JSONObject();
+        String stateString;
+
+        stateString = Util.centralStateStringFromCentralState(m_service.getServiceState());
+
+        parameters.put(Constants.kState, stateString);
+
+        response.put(Constants.kParams, parameters);
+        response.put(Constants.kResult, Constants.kCentralState);
+
+        sendResponse(response);
+    }
+
+    private void scanForPeripherals(JSONObject reqObj) throws JSONException
+    {
+        String requestID = getRequestID(reqObj);
+        JSONObject params;
+        JSONArray servcieUUIDArray;
+        boolean duplicates;
+
         if (!isPoweredOn()) {
-            sendReasonForFailedCall();
+            sendReasonForFailedCall(Constants.kScanForPeripherals, requestID);
             return;
         }
 
-        try {
-            if(reqObj.has(Constants.kParams)) {
+        // Clear the list of service IDs that are used for filtering scan.
+        m_filtered_services.clear();
+
+        if (!reqObj.has(Constants.kParams)) {
+            sendInvalidParameters(Constants.kScanForPeripherals, requestID);
+            return;
+        }
+
+        params = reqObj.getJSONObject(Constants.kParams);
+
+        duplicates = params.has(Constants.kScanOptionAllowDuplicatesKey) && params.getBoolean(Constants.kScanOptionAllowDuplicatesKey);
+
+        if (params.has(Constants.kServiceUUIDs)) {
+            servcieUUIDArray = params.getJSONArray(Constants.kServiceUUIDs);
+
+            for (int i = 0; i < servcieUUIDArray.length(); i++) {
+                m_filtered_services.add(servcieUUIDArray.getString(i));
+            }
+        }
+
+        m_service.startDeviceDiscovery(0, duplicates);
+
+        isRequestExist = true;
+    }
+
+    private void stopScanning(JSONObject reqObj) throws JSONException
+    {
+        JSONObject response;
+        String requestID = getRequestID(reqObj);
+
+        if (!isPoweredOn()) {
+            sendReasonForFailedCall(Constants.kStopScanning, requestID);
+            return;
+        }
+
+        response = new JSONObject();
+
+        response.put(Constants.kResult, Constants.kStopScanning);
+        sendResponse(response);
+
+        m_service.stopDeviceDiscovery();
+    }
+
+    private void connectPeripheral(JSONObject reqObj) throws JSONException
+    {
+        String requestID = getRequestID(reqObj);
+        if (!isPoweredOn()) {
+            sendReasonForFailedCall(Constants.kConnect, requestID);
+        } else {
+            if (reqObj.has(Constants.kParams)) {
                 JSONObject parameters = reqObj.getJSONObject(Constants.kParams);
 
-                if(parameters.has(Constants.kPeripheralUUID)) {
-                    mAddress = parameters.getString(Constants.kPeripheralUUID);
-
-                    for (BluetoothDevice bdevice : mAvailableDevices) {
-                        if (bdevice.getAddress().equals(mAddress)) {
-                            mService.connectLEDevice(bdevice);
-                        }
-                    }
+                if (parameters.has(Constants.kPeripheralUUID)) {
+                    String address = parameters.getString(Constants.kPeripheralUUID);
+                    m_service.connectDevice(address);
                 } else {
-                    invalidParameters(Constants.kConnect);
-                    return;
+                    sendInvalidParameters(Constants.kConnect, requestID);
                 }
             } else {
-                invalidParameters(Constants.kConnect);
-                return;
+                sendInvalidParameters(Constants.kConnect, requestID);
             }
-        } catch (JSONException e) {
-            e.printStackTrace();
         }
     }
 
-    public void disconnectStick(JSONObject reqObj) {
+    private void disconnectPeripheral(JSONObject reqObj) throws JSONException
+    {
         // handle disconnect event
+        String requestID = getRequestID(reqObj);
         if (!isPoweredOn()) {
-            sendReasonForFailedCall();
-            return;
-        }
-
-        try {
+            sendReasonForFailedCall(Constants.kDisconnect, requestID);
+        } else {
             if(reqObj.has(Constants.kParams)) {
                 JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
                 if(jObj.has(Constants.kPeripheralUUID)) {
-                    mAddress = jObj.getString(Constants.kPeripheralUUID);
+                    String address = jObj.getString(Constants.kPeripheralUUID);
+                    m_service.disconnectDevice(address);
                 } else {
-                    invalidParameters(Constants.kDisconnect);
-
-                    return;
+                    sendInvalidParameters(Constants.kDisconnect, requestID);
                 }
             } else {
-                invalidParameters(Constants.kDisconnect);
-                return;
-            }
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
-
-        for (BluetoothGatt gatt : mConnectedDevices) {
-            BluetoothDevice device = gatt.getDevice();
-
-            if (device.getAddress().equals(mAddress)) {
-                mService.disconnectLEDevice(gatt);
+                sendInvalidParameters(Constants.kDisconnect, requestID);
             }
         }
     }
 
-    public void getConnectionState(JSONObject reqObj) {
-        // need to comnplare with connected device address
-        String stateOfPerpheral = null;
+    private void getServices(JSONObject reqObj) throws JSONException
+    {
+        String requestID = getRequestID(reqObj);
+        if(reqObj.has(Constants.kParams)) {
+            JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
-        for (BluetoothGatt gatt : mConnectedDevices) {
-            stateOfPerpheral = Util.peripheralStateStringFromPeripheralState(gatt);
-        }
-
-        if (stateOfPerpheral != null) {
-            JSONObject respObj = new JSONObject();
-
-            try {
-                respObj.put(Constants.kResult, Constants.kCentralState);
-                respObj.put(Constants.kStateField, stateOfPerpheral);
-
-                sendResponse(respObj);
-            } catch (JSONException e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
-    public void getConnectedPeripherals(JSONObject reqObj) {
-        int index = 0;
-        JSONObject respObj = new JSONObject();
-        JSONObject peripheralsObj = new JSONObject();
-        JSONObject peripheralObj = new JSONObject();
-
-        for (BluetoothGatt gatt : mConnectedDevices) {
-            String peripheralState = Util.peripheralStateStringFromPeripheralState(gatt);
-            String peripheralUUIDString = Util.peripheralUUIDStringFromPeripheral(gatt.getDevice()).toUpperCase(Locale.getDefault());
-
-            try {
-                peripheralObj.put(Constants.kStateField, peripheralState);
-                peripheralObj.put(Constants.kPeripheralUUID,peripheralUUIDString);
-                peripheralsObj.put("" + index, peripheralObj);
-                index++;
-            } catch (JSONException e) {
-                e.printStackTrace();
-            }
-        }
-
-        try {
-            respObj.put(Constants.kPeripherals, peripheralsObj);
-            sendResponse(respObj);
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void getServices(JSONObject reqObj) {
-        String peripheralAddress = null;
-
-        try {
-            if(reqObj.has(Constants.kParams)) {
-                JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
-
-                if(jObj.has(Constants.kPeripheralUUID)) {
-                    peripheralAddress = jObj.getString(Constants.kPeripheralUUID);
-                    BluetoothGatt gatt = Util.peripheralIn(mConnectedDevices, peripheralAddress);
-
-                    if (gatt == null) {
-                        sendPeripheralNotFoundErrorMessage();
-                        return;
-                    }
-
-                    mService.getServices(gatt);
-                } else {
-                    invalidParameters(Constants.kGetServices);
-                    return;
-                }
+            if(jObj.has(Constants.kPeripheralUUID)) {
+                String peripheralAddress = jObj.getString(Constants.kPeripheralUUID);
+                m_service.getDeviceServices(peripheralAddress);
             } else {
-                invalidParameters(Constants.kGetServices);
-                return;
+                sendInvalidParameters(Constants.kGetServices, requestID);
             }
-        } catch (JSONException e) {
-            e.printStackTrace();
+        } else {
+            sendInvalidParameters(Constants.kGetServices, requestID);
         }
     }
 
-    public void getIncludedServices(JSONObject reqObj) {
-        try {
-            if(reqObj.has(Constants.kParams)) {
-                JSONObject parameters = reqObj.getJSONObject(Constants.kParams);
-
-                if(parameters.has(Constants.kServiceUUID)) {
-                    String serviceUUIDString = parameters.getString(Constants.kServiceUUID).toUpperCase(Locale.getDefault());
-                    UUID serviceUUID = UUID.fromString(serviceUUIDString);
-                    HashMap<BluetoothGatt, BluetoothGattService> requestedPeripheralAndService = Util.serviceIn(mConnectedDevices, serviceUUID);
-                    Set<BluetoothGatt> keySet = requestedPeripheralAndService.keySet();
-                    BluetoothGatt bGatt = null;
-
-                    for (BluetoothGatt gatt : keySet) {
-                        bGatt = gatt;
-                    }
-
-                    if (bGatt == null) {
-                        sendPeripheralNotFoundErrorMessage();
-                        return;
-                    }
-
-                    BluetoothGattService service = requestedPeripheralAndService.get(bGatt);
-
-                    if (service == null) {
-                        sendServiceNotFoundErrorMessage();
-                        return;
-                    }
-                } else {
-                    invalidParameters(Constants.kGetIncludedServices);
-                    return;
-                }
-            } else {
-                invalidParameters(Constants.kGetIncludedServices);
-                return;
-            }
-
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void getCharacteristics(JSONObject reqObj) {
+    private void getCharacteristics(JSONObject reqObj) throws JSONException
+    {
+        String serviceUUIDString;
         JSONObject reqParameters;
 
-        try {
-            reqParameters = reqObj.getJSONObject(Constants.kParams);
-            String serviceUUIDString = reqParameters.getString(Constants.kServiceUUID).toUpperCase(Locale.getDefault());
-            sCBUUID = serviceUUIDString;
-            UUID serviceUUID = UUID.fromString(Util.ConvertUUID_16bitInto128bit(serviceUUIDString));
-            HashMap<BluetoothGatt, BluetoothGattService> requestedPeripheralAndService = Util.serviceIn(mConnectedDevices, serviceUUID);
-            Set<BluetoothGatt> keySet = requestedPeripheralAndService.keySet();
-            BluetoothGatt bGatt = null;
+        reqParameters = reqObj.getJSONObject(Constants.kParams);
+        serviceUUIDString = reqParameters.getString(Constants.kServiceUUID);
 
-            for (BluetoothGatt gatt : keySet) {
-                bGatt = gatt;
+        m_service.getDeviceAttributes(serviceUUIDString);
+    }
+
+    private void getDescriptors(JSONObject reqObj) throws JSONException
+    {
+        String requestID = getRequestID(reqObj);
+        if (reqObj.has(Constants.kParams)) {
+            JSONObject reqparameters = reqObj.getJSONObject(Constants.kParams);
+
+            if (reqparameters.has(Constants.kCharacteristicUUID)) {
+                String characteristicsUUIDString = reqparameters.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault());
+                m_service.getDeviceAttributeDescriptors(characteristicsUUIDString);
+            } else {
+                sendInvalidParameters(Constants.kGetDescriptors, requestID);
             }
-
-            if (bGatt == null) {
-                sendPeripheralNotFoundErrorMessage();
-                return;
-            }
-
-            BluetoothGattService requestedService = requestedPeripheralAndService.get(bGatt);
-
-            if (requestedService == null) {
-                sendServiceNotFoundErrorMessage();
-                return;
-            }
-
-            List<JSONObject> listOfCharacteristics = Util.listOfJsonCharacteristicsFrom(requestedService.getCharacteristics());
-            JSONObject parameters = new JSONObject();
-            JSONObject response = new JSONObject();
-            parameters.put(Constants.kPeripheralUUID, bGatt.getDevice().getAddress());
-            parameters.put(Constants.kServiceUUID, serviceUUIDString);
-            parameters.put(Constants.kCharacteristics, new JSONArray(listOfCharacteristics));
-            response.put(Constants.kResult, Constants.kGetCharacteristics);
-            response.put(Constants.kParams, parameters);
-
-            sendResponse(response);
-        } catch (JSONException e) {
-            e.printStackTrace();
+        } else {
+            sendInvalidParameters(Constants.kGetDescriptors, requestID);
         }
     }
 
-    public void getDescriptors(JSONObject reqObj) {
-        try {
-            if(reqObj.has(Constants.kParams)) {
-                JSONObject reqparameters = reqObj.getJSONObject(Constants.kParams);
+    private void getCharacteristicValue(JSONObject reqObj) throws JSONException
+    {
+        String requestID = getRequestID(reqObj);
 
-                if(reqparameters.has(Constants.kCharacteristicUUID)) {
-                    String characteristicsUUIDString = reqparameters.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault());
-                    UUID characteristicsUUID = UUID.fromString(Util.ConvertUUID_16bitInto128bit(characteristicsUUIDString));
-                    HashMap<BluetoothGatt, BluetoothGattCharacteristic> peripheralAndCharacteristic = Util.characteristicIn(mConnectedDevices, characteristicsUUID);
-                    Set<BluetoothGatt> keySet = peripheralAndCharacteristic.keySet();
-                    BluetoothGatt gatt = null;
+        if(reqObj.has(Constants.kParams)) {
+            JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
-                    for (BluetoothGatt bGatt : keySet) {
-                        gatt = bGatt;
-                    }
+            if(jObj.has(Constants.kCharacteristicUUID)) {
+                String characteristicUUID =  Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault()));
+                m_service.getDeviceAttributeValue(characteristicUUID);
+            } else {
+                sendInvalidParameters(Constants.kGetCharacteristicValue,requestID);
+            }
+        } else {
+            sendInvalidParameters(Constants.kGetCharacteristicValue,requestID);
+        }
+    }
 
-                    if (gatt == null) {
-                        sendPeripheralNotFoundErrorMessage();
-                        return;
-                    }
+    private void writeCharacteristicValue(JSONObject reqObj) throws JSONException
+    {
+        String requestID = getRequestID(reqObj);
+        if(reqObj.has(Constants.kParams)) {
+            JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
-                    BluetoothGattCharacteristic characteristic = peripheralAndCharacteristic.get(gatt);
+            if(jObj.has(Constants.kCharacteristicUUID) && jObj.has(Constants.kValue)) {
+                String writeType = null;
+                String characteristicUUID = Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault()));
 
-                    if (characteristic == null) {
-                        sendCharacteristicNotFoundErrorMessage();
-                        return;
-                    }
-                    List<JSONObject> descriptorArray = Util.listOfJsonDescriptorsFrom(characteristic.getDescriptors());
-                    String peripheralUUIDString = gatt.getDevice().getAddress();
-                    String serviceUUIDString = sCBUUID.toUpperCase(Locale.getDefault());
-                    JSONObject parameters = new JSONObject();
-                    JSONObject response = new JSONObject();
-                    parameters.put(Constants.kCharacteristicUUID, characteristicsUUIDString);
-                    parameters.put(Constants.kPeripheralUUID, peripheralUUIDString);
-                    parameters.put(Constants.kServiceUUID, serviceUUIDString);
-                    parameters.put(Constants.kDescriptors, new JSONArray(descriptorArray));
-                    response.put(Constants.kResult, Constants.kGetDescriptors);
-                    response.put(Constants.kParams, parameters);
-
-                    sendResponse(response);
-                } else {
-                    invalidParameters(Constants.kGetDescriptors);
+                int length = jObj.getString(Constants.kValue).length();
+                if(length%2 != 0) {
+                    sendInvalidLength(Constants.kWriteCharacteristicValue ,requestID);
                     return;
                 }
-            } else {
-                invalidParameters(Constants.kGetDescriptors);
-                return;
-            }
+                byte[] writeData = Util.hexStringToByteArray(jObj.getString(Constants.kValue));
 
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void getCharacteristicValue(JSONObject reqObj) {
-        try {
-            if(reqObj.has(Constants.kParams)) {
-                JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
-
-                if(jObj.has(Constants.kCharacteristicUUID)) {
-                    String uuidString =  Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault()));
-                    UUID characteristicUUID = UUID.fromString(uuidString);
-                    HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristics = Util.characteristicIn(mConnectedDevices, characteristicUUID);
-                    Set<BluetoothGatt> keySet = characteristics.keySet();
-
-                    for (BluetoothGatt bGatt : keySet) {
-                        BluetoothGattCharacteristic characteristic = characteristics.get(bGatt);
-                        if (characteristic == null) {
-                            sendCharacteristicNotFoundErrorMessage();
-                            return;
-                        }
-                      mService.readCharacteristicValue(bGatt, characteristic);
-                    }
-                } else {
-                    invalidParameters(Constants.kGetCharacteristicValue);
-                    return;
+                if(jObj.has(Constants.kWriteType)) {
+                    writeType = Util.writeTypeForCharacteristicGiven(jObj.getString(Constants.kWriteType));
                 }
-            } else {
-                invalidParameters(Constants.kGetCharacteristicValue);
-                return;
-            }
 
-        } catch (JSONException e) {
-            e.printStackTrace();
+                m_service.writeDeviceAttributeValue(characteristicUUID, writeType, writeData);
+            } else {
+                sendInvalidParameters(Constants.kWriteCharacteristicValue,requestID);
+            }
+        } else {
+            sendInvalidParameters(Constants.kWriteCharacteristicValue,requestID);
         }
     }
 
-    public void writeCharacteristicValue(JSONObject reqObj) {
-        try {
-            byte[] writeData;
+    private void setValueNotification(JSONObject reqObj) throws JSONException
+    {
+        m_notifications = !m_notifications;
+        String requestID = getRequestID(reqObj);
 
-            if(reqObj.has(Constants.kParams)) {
-                JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
+        if(reqObj.has(Constants.kParams)) {
+            JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
-                if(jObj.has(Constants.kCharacteristicUUID) && jObj.has(Constants.kValue)) {
-                    String uuidString = Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault()));
-                    writeData = Util.hexStringToByteArray(jObj.getString(Constants.kValue));
-                    UUID characteristicUUID = UUID.fromString(uuidString);
-                    HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristics = Util.characteristicIn(mConnectedDevices, characteristicUUID);
-                    Set<BluetoothGatt> keySet = characteristics.keySet();
-
-                    for (BluetoothGatt bGatt : keySet) {
-                        BluetoothGattCharacteristic characteristic = characteristics.get(bGatt);
-
-                        if (characteristic == null) {
-                            sendCharacteristicNotFoundErrorMessage();
-                            return;
-                        }
-
-                        String writeType = null;
-
-                        if(jObj.has(Constants.kWriteType)) {
-                           writeType = Util.writeTypeForCharacteristicGiven(jObj.getString(Constants.kWriteType));
-                        }
-
-                        mService.writeCharacteristicValue(bGatt, characteristic, writeType, writeData);
-                    }
-                } else {
-                    invalidParameters(Constants.kWriteCharacteristicValue);
-                    return;
-                }
+            if(jObj.has(Constants.kCharacteristicUUID) && jObj.has(Constants.kValue)) {
+                String characteristicUUID = Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault()));
+                String subscribe = jObj.getString(Constants.kValue);
+                Boolean subscribeBOOL = subscribe.equals("true");
+                m_isNotifying = subscribeBOOL;
+                m_service.getDeviceAttributeNotifications(characteristicUUID, subscribeBOOL);
             } else {
-                invalidParameters(Constants.kWriteCharacteristicValue);
-                return;
+                sendInvalidParameters(Constants.kSetValueNotification, requestID);
             }
+        } else {
+            sendInvalidParameters(Constants.kSetValueNotification, requestID);
+        }
 
-        } catch (JSONException e) {
-            e.printStackTrace();
+        isRequestExist = true;
+    }
+
+    private void getDescriptorValue(JSONObject reqObj) throws JSONException
+    {
+        String requestID = getRequestID(reqObj);
+        if(reqObj.has(Constants.kParams)) {
+            JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
+
+            if(jObj.has(Constants.kDescriptorUUID)) {
+                String descriptorUUID = Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kDescriptorUUID).toUpperCase(Locale.getDefault()));
+                m_service.getDeviceAttributeDescriptorValue(descriptorUUID);
+            } else {
+                sendInvalidParameters(Constants.kGetDescriptorValue,requestID);
+            }
+        } else {
+            sendInvalidParameters(Constants.kGetDescriptorValue,requestID);
         }
     }
 
-    public void setValueNotification(JSONObject reqObj) {
-        if (mNotifications)
-            mNotifications = false;
-        else
-            mNotifications = true;
+    private void writeDescriptorValue(JSONObject reqObj) throws JSONException
+    {
+        String requestID = getRequestID(reqObj);
+        if(reqObj.has(Constants.kParams)) {
+            JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
-        try {
-            if(reqObj.has(Constants.kParams)) {
-                JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
+            if(jObj.has(Constants.kCharacteristicUUID) && jObj.has(Constants.kValue)) {
+                String descriptorUUID = Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kDescriptorUUID));
+                byte[] writeData = Util.hexStringToByteArray(jObj.getString(Constants.kValue));
 
-                if(jObj.has(Constants.kCharacteristicUUID) && jObj.has(Constants.kValue)) {
-                    String uuidString = Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kCharacteristicUUID).toUpperCase(Locale.getDefault()));
-                    String subscribe = jObj.getString(Constants.kValue);
-                    Boolean subscribeBOOL;
-
-                    if (subscribe.equals("true"))
-                        subscribeBOOL = true;
-                    else
-                        subscribeBOOL = false;
-
-                    UUID characteristicUUID = UUID.fromString(uuidString);
-                    HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristics = Util.characteristicIn(mConnectedDevices, characteristicUUID);
-                    Set<BluetoothGatt> keySet = characteristics.keySet();
-
-                    for (BluetoothGatt bGatt : keySet) {
-                        BluetoothGattCharacteristic characteristic = characteristics.get(bGatt);
-
-                        if (characteristic == null) {
-                            sendCharacteristicNotFoundErrorMessage();
-                            return;
-                        }
-
-                        mService.setValueNotification(bGatt, characteristic, subscribeBOOL);
-                    }
-                } else {
-                    invalidParameters(Constants.kSetValueNotification);
-                    return;
-                }
+                m_service.writeDeviceAttributeDescriptorValue(descriptorUUID, writeData);
             } else {
-                invalidParameters(Constants.kSetValueNotification);
-                return;
+                sendInvalidParameters(Constants.kWriteCharacteristicValue,requestID);
             }
-        } catch (JSONException e) {
-            e.printStackTrace();
+        } else {
+            sendInvalidParameters(Constants.kWriteCharacteristicValue,requestID);
         }
     }
 
-    public void getDescriptorValue(JSONObject reqObj) {
-        try {
-            if(reqObj.has(Constants.kParams)) {
-                JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
-
-                if(jObj.has(Constants.kDescriptorUUID)) {
-                    String uuidString = Util.ConvertUUID_16bitInto128bit(jObj.getString(Constants.kDescriptorUUID).toUpperCase(Locale.getDefault()));
-                    UUID descriptorUUID = UUID.fromString(uuidString);
-                    HashMap<BluetoothGatt, BluetoothGattDescriptor> descriptors = Util.descriptorIn(mConnectedDevices, descriptorUUID);
-                    Set<BluetoothGatt> keySet = descriptors.keySet();
-
-                    for (BluetoothGatt gatt : keySet) {
-                        BluetoothGattDescriptor desc = descriptors.get(keySet);
-
-                        if (desc == null) {
-                            sendDescriptorNotFoundErrorMessage();
-                            return;
-                        }
-
-                        mService.readDescriptorValue(gatt, desc);
-                    }
-                } else {
-                    invalidParameters(Constants.kGetDescriptorValue);
-                    return;
-                }
-            } else {
-                invalidParameters(Constants.kGetDescriptorValue);
-                return;
-            }
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void getPeripheralState(JSONObject reqObj) {
+    private void getPeripheralState(JSONObject reqObj) throws JSONException
+    {
+        String requestID = getRequestID(reqObj);
+    // TODO: rewrte.
         try {
             if(reqObj.has(Constants.kParams)) {
                 JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
                 if(jObj.has(Constants.kPeripheralUUID)) {
                     String address = jObj.getString(Constants.kPeripheralUUID);
-                    BluetoothGatt gatt = Util.peripheralIn(mConnectedDevices, address);
+                    BluetoothGatt gatt = Util.peripheralIn(m_service.getConnectedDevices(), address);
 
                     if (gatt == null) {
-                        sendPeripheralNotFoundErrorMessage();
+                        sendPeripheralNotFoundErrorMessage(Constants.kGetPeripheralState,requestID);
                         return;
                     }
 
@@ -1425,11 +605,11 @@ public class GATTIP implements ServiceConnection {
 
                     sendResponse(respObj);
                 } else {
-                    invalidParameters(Constants.kGetPeripheralState);
+                    sendInvalidParameters(Constants.kGetPeripheralState,requestID);
                     return;
                 }
             } else {
-                invalidParameters(Constants.kGetPeripheralState);
+                sendInvalidParameters(Constants.kGetPeripheralState,requestID);
                 return;
             }
         } catch (JSONException e) {
@@ -1437,279 +617,718 @@ public class GATTIP implements ServiceConnection {
         }
     }
 
-    public void getRSSI(JSONObject reqObj) {
-        try {
-            if(reqObj.has(Constants.kParams)) {
-                JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
+    private void getRSSI(JSONObject reqObj) throws JSONException
+    {
+        String requestID = getRequestID(reqObj);
 
-                if(jObj.has(Constants.kPeripheralUUID)) {
-                    String address = jObj.getString(Constants.kPeripheralUUID);
-                    BluetoothGatt gatt = Util.peripheralIn(mConnectedDevices, address);
+        if(reqObj.has(Constants.kParams)) {
+            JSONObject jObj = reqObj.getJSONObject(Constants.kParams);
 
-                    if (gatt == null) {
-                        sendPeripheralNotFoundErrorMessage();
-                        return;
-                    }
-
-                    mService.readRemoteRssi(gatt);
-                } else {
-                    invalidParameters(Constants.kGetRSSI);
-                    return;
-                }
+            if(jObj.has(Constants.kPeripheralUUID)) {
+                String address = jObj.getString(Constants.kPeripheralUUID);
+                m_service.getDeviceSignal(address);
             } else {
-                invalidParameters(Constants.kGetRSSI);
-                return;
+                sendInvalidParameters(Constants.kGetRSSI, requestID);
             }
-        } catch (JSONException e) {
-            e.printStackTrace();
+        } else {
+            sendInvalidParameters(Constants.kGetRSSI, requestID);
         }
     }
 
-    public boolean isPoweredOn() {
-        // checking whether bluetooth is connected or not
-        mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
-
-        if (mBluetoothAdapter == null) {
-            // bluetooth not supported
-        }
-        // if bluetooth is not enable then enable the bluetooth
-        if (mBluetoothAdapter.isEnabled())
-            return true;
-        else
-            return false;
-    }
-
-    public void sendReasonForFailedCall() {
+    private void sendReasonForFailedCall(String method, String requestId) throws JSONException
+    {
+        JSONObject response = new JSONObject();
         JSONObject errorObj = new JSONObject();
-        JSONObject errorResponse = new JSONObject();
 
-        try {
-            String errorMessage = Util.centralStateStringFromCentralState(mBluetoothAdapter.getState());
+        response.put(Constants.kResult, method);
 
-            errorObj.put(Constants.kCode, Constants.kError32001);
-            errorObj.put(Constants.kMessageField, errorMessage);
-            errorResponse.put(Constants.kError, errorObj);
-
-            sendResponse(errorResponse);
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
+        if(requestId!=null)
+            response.put(Constants.kRequestId, requestId);
+        errorObj.put(Constants.kCode, Constants.kError32001);
+        errorObj.put(Constants.kMessageField, "ERROR");
+        response.put(Constants.kError, errorObj);
+        sendResponse(response);
     }
 
-    public void sendPeripheralNotFoundErrorMessage() {
+    private void sendPeripheralNotFoundErrorMessage(String method, String requestId) throws JSONException
+    {
         JSONObject errorObj = new JSONObject();
-        JSONObject errorResponse = new JSONObject();
+        JSONObject response = new JSONObject();
 
-        try {
-            errorObj.put(Constants.kCode, Constants.kError32001);
-            errorResponse.put(Constants.kError, errorObj);
+        response.put(Constants.kResult, method);
+        if(requestId!=null)
+            response.put(Constants.kRequestId, requestId);
+        errorObj.put(Constants.kCode, Constants.kError32001);
+        errorObj.put(Constants.kMessageField, "Peripheral not found.");
+        response.put(Constants.kError, errorObj);
 
-            sendResponse(errorResponse);
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
+        sendResponse(response);
     }
 
-    public void sendServiceNotFoundErrorMessage() {
+    private void sendServiceNotFoundErrorMessage(String method, String requestId) throws JSONException
+    {
         JSONObject errorObj = new JSONObject();
-        JSONObject errorResponse = new JSONObject();
+        JSONObject response = new JSONObject();
 
-        try {
-            errorObj.put(Constants.kCode, Constants.kError32002);
-            errorResponse.put(Constants.kError, errorObj);
+        response.put(Constants.kResult, method);
+        if(requestId!=null)
+            response.put(Constants.kRequestId, requestId);
+        errorObj.put(Constants.kCode, Constants.kError32002);
+        errorObj.put(Constants.kMessageField, "Service not found.");
+        response.put(Constants.kError, errorObj);
 
-            sendResponse(errorResponse);
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
+        sendResponse(response);
     }
 
-    public void sendCharacteristicNotFoundErrorMessage() {
+    private void sendCharacteristicNotFoundErrorMessage(String method, String requestId) throws JSONException
+    {
         JSONObject errorObj = new JSONObject();
-        JSONObject errorResponse = new JSONObject();
+        JSONObject response = new JSONObject();
 
-        try {
-            errorObj.put(Constants.kCode, Constants.kError32003);
-            errorResponse.put(Constants.kError, errorObj);
+        response.put(Constants.kResult, method);
 
-            sendResponse(errorResponse);
-        } catch (JSONException e) {
-            e.printStackTrace();
+        if(requestId!=null) {
+            response.put(Constants.kRequestId, requestId);
         }
+
+        errorObj.put(Constants.kCode, Constants.kError32003);
+        errorObj.put(Constants.kMessageField, "Characteristic not found.");
+
+        response.put(Constants.kError, errorObj);
+
+        sendResponse(response);
     }
 
-    public void sendDescriptorNotFoundErrorMessage() {
+    private void sendDescriptorNotFoundErrorMessage(String method, String requestId) throws JSONException
+    {
         JSONObject errorObj = new JSONObject();
-        JSONObject errorResponse = new JSONObject();
+        JSONObject response = new JSONObject();
 
-        try {
-            errorObj.put(Constants.kCode, Constants.kError32001);
-            errorResponse.put(Constants.kError, errorObj);
+        response.put(Constants.kResult, method);
+        if(requestId!=null)
+            response.put(Constants.kRequestId, requestId);
+        errorObj.put(Constants.kCode, Constants.kError32001);
+        errorObj.put(Constants.kMessageField, "Descriptor not found.");
+        response.put(Constants.kError, errorObj);
 
-            sendResponse(errorResponse);
-        } catch (JSONException e) {
-            e.printStackTrace();
-        }
+        sendResponse(response);
+
     }
 
-    public void sendNoServiceSpecified() {
+    private void sendInvalidRequest() throws JSONException
+    {
+        JSONObject errorObj = new JSONObject();
+        errorObj.put(Constants.kCode, Constants.kInvalidRequest);
+        JSONObject jsonData = new JSONObject();
+        jsonData.put(Constants.kError, errorObj);
+        sendResponse(jsonData);
+    }
+
+    private void sendInvalidParameters(String method, String requestId) throws JSONException
+    {
+        JSONObject errorObj = new JSONObject();
+        JSONObject response = new JSONObject();
+        response.put(Constants.kResult, method);
+        if(requestId!=null)
+            response.put(Constants.kRequestId, requestId);
+        errorObj.put(Constants.kCode, Constants.kInvalidParams);
+        errorObj.put(Constants.kMessageField, "Invalid parameter.");
+        response.put(Constants.kError, errorObj);
+
+        sendResponse(response);
+    }
+
+    private void sendTimeoutError() throws JSONException
+    {
+        JSONObject errorObj = new JSONObject();
+        JSONObject response = new JSONObject();
+
+        response.put(Constants.kResult, "Timedout");
+
+        errorObj.put(Constants.kCode, "Timedout error");
+
+        response.put(Constants.kError, errorObj);
+
+        sendResponse(response);
+    }
+
+    private String getRequestID (JSONObject request) throws JSONException
+    {
+        String requestID = "";
+
+        if (request != null) {
+            try {
+                if (request.has(Constants.kRequestId))
+                    requestID = request.getString(Constants.kRequestId);
+            } catch (JSONException ex) {
+                ex.printStackTrace();
+            }
+        }
+
+        return requestID;
+    }
+
+    private void sendInvalidLength(String method, String requestId) throws JSONException{
+
+        JSONObject errorObj = new JSONObject();
+        JSONObject response = new JSONObject();
+        response.put(Constants.kResult, method);
+        if(requestId!=null)
+            response.put(Constants.kRequestId, requestId);
+        errorObj.put(Constants.kCode, Constants.kError32603);
+        errorObj.put(Constants.kMessageField, "Invalid length.");
+        response.put(Constants.kError, errorObj);
+
+        sendResponse(response);
+    }
+
+//    final Thread m_time_out_error_thread = new Thread(new Runnable() {
+//        @Override
+//        public void run() {
+//            try {
+//                sendTimeoutError();
+//            } catch (JSONException e) {
+//                throw new RuntimeException(e);
+//            }
+//        }
+//    });
+
+  
+   @Override
+   public void onDeviceFound(String deviceIdentifier, String deviceName, int deviceSignal, List<String> serviceUUIDs, byte[] deviceData)
+   {
+
+       if(serviceUUIDs.size() > 0) {
+           Log.v("service UUIDs", ""+serviceUUIDs.size());
+       }
+       if(m_filtered_services.size()>0) {
+           int count = 0;
+
+           for (int i = 0; i < serviceUUIDs.size(); i++) {
+               for (int j = 0; j < m_filtered_services.size(); j++) {
+                   if (serviceUUIDs.get(i).contains(m_filtered_services.get(j))) {
+                       count++;
+                   }
+               }
+           }
+
+           if (count > 0) {
+               // call response method here
+               sendScanResponse(deviceIdentifier, deviceName, deviceSignal, deviceData);
+           }
+       } else {
+           sendScanResponse(deviceIdentifier, deviceName, deviceSignal, deviceData);
+       }
+   }
+
+    public void sendScanResponse(String deviceIdentifier, String deviceName, int deviceSignal, byte[] deviceData) {
         try {
             JSONObject response = new JSONObject();
-            JSONObject errorResponse = new JSONObject();
-            errorResponse.put(Constants.kCode, Constants.kError32006);
-            response.put(Constants.kError, errorResponse);
+            JSONObject parameters = new JSONObject();
+            JSONObject adParameters = new JSONObject();
+
+            if(deviceIdentifier != null) {
+                String btAddr = deviceIdentifier.replaceAll(":", "-");
+                parameters.put(Constants.kPeripheralBtAddress, btAddr);
+                parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+            }
+
+            adParameters.put(Constants.kRawAdvertisementData, Util.byteArrayToHex(deviceData));
+
+            parameters.put(Constants.kAdvertisementDataKey, adParameters);
+            parameters.put(Constants.kRSSIkey, deviceSignal);
+
+            if(deviceName != null) {
+                parameters.put(Constants.kPeripheralName, deviceName);
+            } else {
+                parameters.put(Constants.kPeripheralName, "Unknown");
+            }
+
+            response.put(Constants.kResult, Constants.kScanForPeripherals);
+            response.put(Constants.kParams, parameters);
+
+            sendResponse(response, true);
+        } catch (JSONException je) {
+            je.printStackTrace();
+        }
+    }
+
+
+    @Override
+    public void onDeviceConnection(String deviceName, String deviceIdentifier)
+    {
+        JSONObject parameters = new JSONObject();
+        JSONObject response = new JSONObject();
+
+        // send connected response to client
+        try {
+            parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+
+            if(deviceName != null) {
+                parameters.put(Constants.kPeripheralName, deviceName);
+            } else {
+                parameters.put(Constants.kPeripheralName, "");
+            }
+
+            response.put(Constants.kResult, Constants.kConnect);
+            response.put(Constants.kParams, parameters);
+
+            sendResponse(response);
+
+            m_service.stopDeviceDiscovery();
+        } catch (JSONException je) {
+            je.printStackTrace();
+        }
+    }
+
+    @Override
+    public void onDeviceDisconnection(String deviceName, String deviceIdentifier)
+    {
+        JSONObject parameters = new JSONObject();
+        JSONObject response = new JSONObject();
+
+        // send response to client
+        try {
+            // get the json data to send client
+            parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+
+            if(deviceName != null) {
+                parameters.put(Constants.kPeripheralName, deviceName);
+            } else {
+                parameters.put(Constants.kPeripheralName, "");
+            }
+
+            response.put(Constants.kResult, Constants.kDisconnect);
+            response.put(Constants.kParams, parameters);
+
             sendResponse(response);
         } catch (JSONException je) {
             je.printStackTrace();
         }
     }
 
-    public void sendNoPeripheralsSpecified() {
+    @Override
+    public void onDeviceConnectionFailure(String deviceName, String deviceIdentifier, int status)
+    {
+        JSONObject response = new JSONObject();
+        JSONObject errorCode = new JSONObject();
+        JSONObject parameters = new JSONObject();
+
         try {
-            JSONObject response = new JSONObject();
-            JSONObject errorResponse = new JSONObject();
-            errorResponse.put(Constants.kCode, Constants.kError32007);
-            response.put(Constants.kError, errorResponse);
+            errorCode.put(Constants.kCode, Constants.kError32603);
+            errorCode.put(Constants.kMessageField, "failed to connect");
+
+            parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+
+            response.put(Constants.kParams, parameters);
+            response.put(Constants.kResult, Constants.kConnect);
+            response.put(Constants.kError, errorCode);
+
             sendResponse(response);
-        } catch (JSONException je) {
-            je.printStackTrace();
-        }
-    }
-
-    public void invalidRequest() {
-        try {
-            JSONObject errorObj = new JSONObject();
-            errorObj.put(Constants.kCode, Constants.kInvalidRequest);
-            JSONObject jsonData = new JSONObject();
-            jsonData.put(Constants.kError, errorObj);
-            sendResponse(jsonData);
-        } catch (JSONException je) {
-            je.printStackTrace();
-        }
-    }
-
-    public void invalidParameters(String method) {
-        JSONObject errorObj = new JSONObject();
-        JSONObject errorResponse = new JSONObject();
-
-        try {
-            errorResponse.put(Constants.kResult, method);
-            errorObj.put(Constants.kCode, Constants.kInvalidParams);
-            errorResponse.put(Constants.kError, errorObj);
-
-            sendResponse(errorResponse);
         } catch (JSONException e) {
             e.printStackTrace();
         }
     }
 
+    @Override
+    public void onDeviceServices(String deviceIdentifier, List services, int status) {
+        JSONObject response = new JSONObject();
+        JSONObject errorCode = new JSONObject();
+        JSONObject parameters = new JSONObject();
 
-    public List<JSONObject> listOFResponseAndRequests() {
-        if(previousRequests != null && previousRequests.size() >0)
-            return previousRequests;
-        else return null;
-    }
-
-    private static List<JSONObject> previousRequests;
-    /**
-     * Handles logging of Requests and Responses including releasing the oldest
-     * 25% of the Requests/Respnoses if/when the buffer overflows
-     *
-     * @param input  Response/Request
-     */
-    public static void handleLoggingRequestAndResponse(JSONObject input) {
-
-        if(previousRequests != null)
-        {
-            if(previousRequests.size() > MAX_NUMBER_OF_REQUESTS)
-            {
-                for(int i=0;i<MAX_NUMBER_OF_REQUESTS/4.0;i++)
-                {
-                    previousRequests.remove(i);
-                }
-            }
-            previousRequests.add(convertToHumanReadableFormat(input));
-        }
-    }
-
-    public static JSONObject convertToHumanReadableFormat(JSONObject input) {
-        JSONObject outputRespnose = new JSONObject();
-        String humanReadableKey;
-        @SuppressWarnings("unchecked")
-        Iterator<String> allKeys = input.keys();
-        List<String> keys = new ArrayList<String>();
-
-        while (allKeys.hasNext()) {
-            keys.add(allKeys.next());
-        }
-
-        for (String key : keys) {
-            humanReadableKey = Util.humanReadableFormatFromHex(key);
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            List<JSONObject> json_services = Util.listOfJsonServicesFrom(services);
 
             try {
-                Object inputobj = input.get(key);
+                parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+                parameters.put(Constants.kServices, new JSONArray(json_services));
 
-                if (inputobj instanceof String) {
-                    String value = input.getString(key);
-                    String humanReadableValue = Util.humanReadableFormatFromHex(value);
+                response.put(Constants.kResult, Constants.kGetServices);
+                response.put(Constants.kParams, parameters);
 
-                    outputRespnose.put(humanReadableKey, humanReadableValue);
-                } else if (inputobj instanceof JSONObject) {
-                    JSONObject value = (JSONObject) input.get(key);
-                    JSONObject humanReadableValue = convertToHumanReadableFormat(value);
+                sendResponse(response);
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        } else {
+            try {
+                errorCode.put(Constants.kCode, Constants.kError32603);
+                errorCode.put(Constants.kMessageField, "Failed to get services");
+                parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+                response.put(Constants.kParams, parameters);
+                response.put(Constants.kResult, Constants.kGetServices);
+                response.put(Constants.kError, errorCode);
 
-                    outputRespnose.put(humanReadableKey, humanReadableValue);
-                }
+                sendResponse(response);
             } catch (JSONException e) {
                 e.printStackTrace();
             }
         }
-        return outputRespnose;
     }
 
-    public BroadcastReceiver bReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            final String action = intent.getAction();
+    @Override
+    public void onDeviceAttributes(String deviceIdentifier, String serviceIdentifier, List characteristics)
+    {
+        List<JSONObject> listOfCharacteristics = Util.listOfJsonCharacteristicsFrom(characteristics);
+        JSONObject parameters = new JSONObject();
+        JSONObject response = new JSONObject();
+        String serviceUUISString = Util.ConvertUUID_128bitInto16bit(serviceIdentifier.toUpperCase(Locale.getDefault()));
 
-            if (action.equals(BluetoothAdapter.ACTION_STATE_CHANGED)) {
-                final int state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR);
 
-                JSONObject parameters = new JSONObject();
+        try {
+            parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+            parameters.put(Constants.kServiceUUID, serviceUUISString);
+            parameters.put(Constants.kCharacteristics, new JSONArray(listOfCharacteristics));
+            response.put(Constants.kResult, Constants.kGetCharacteristics);
+            response.put(Constants.kParams, parameters);
+
+            sendResponse(response);
+        } catch (JSONException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public void onDevcieAttributeRead(String deviceIdentifier, String serviceIdentifier, String attribIdentifier, byte[] attribValue, int status)
+    {
+        String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(attribIdentifier.toUpperCase(Locale.getDefault()));
+        String serviceUUISString = Util.ConvertUUID_128bitInto16bit(serviceIdentifier.toUpperCase(Locale.getDefault()));
+
+        if(status == BluetoothGatt.GATT_SUCCESS) {
+            JSONObject response = new JSONObject();
+            JSONObject parameters = new JSONObject();
+
+            String characteristicValueString = Util.byteArrayToHex(attribValue);
+
+            try {
+                parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
+                parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+                parameters.put(Constants.kServiceUUID, serviceUUISString);
+                parameters.put(Constants.kValue, characteristicValueString);
+
+                response.put(Constants.kResult, Constants.kGetCharacteristicValue);
+                response.put(Constants.kParams, parameters);
+
+                sendResponse(response);
+            } catch (JSONException je) {
+                je.printStackTrace();
+            }
+        } else if(status == BluetoothGatt.GATT_INSUFFICIENT_AUTHENTICATION || status == BluetoothGatt.GATT_INSUFFICIENT_ENCRYPTION) {
+            Log.v("oncharacteristic read","GATT insufficient");
+
+            try {
                 JSONObject response = new JSONObject();
-                String stateString = Util.centralStateStringFromCentralState(state);
+                JSONObject parameters = new JSONObject();
+                JSONObject errorCode = new JSONObject();
 
-                if (!stateString.equals("") && stateString != null) {
-                    if(BTConnect) {
-                        BTConnect = false;
-                    Log.v("action state changed", stateString);
-                        try {
-                            parameters.put(Constants.kState, stateString);
+                errorCode.put(Constants.kCode, Constants.kUnauthorized);
+                errorCode.put(Constants.kMessageField, "authorization failed");
 
-                            response.put(Constants.kParams, parameters);
-                            response.put(Constants.kResult, Constants.kCentralState);
+                parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
 
-                            sendResponse(response);
-                        } catch (JSONException e) {
-                            e.printStackTrace();
-                        }
-                    } else {
-                        BTConnect = true;
-                    }
-                }
-            } else if(action.equals(BluetoothDevice.ACTION_BOND_STATE_CHANGED)) {
-                final int state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
+                response.put(Constants.kResult, Constants.kGetCharacteristicValue);
+                response.put(Constants.kParams, parameters);
+                response.put(Constants.kError, errorCode);
 
-                if(state == BluetoothDevice.BOND_BONDING) {
-                    Log.v("bonding","*******state bonding");
-                } else if(state == BluetoothDevice.BOND_BONDED) {
-                    Log.v("bondes","******state bonded");
-                } else if(state == BluetoothDevice.BOND_NONE) {
-                    Log.v("none","***** no bonding");
-                }
+                sendResponse(response);
+            } catch (JSONException je) {
+                je.printStackTrace();
+            }
+        } else {
+            try {
+                JSONObject response = new JSONObject();
+                JSONObject parameters = new JSONObject();
+                JSONObject errorCode = new JSONObject();
 
+                errorCode.put(Constants.kCode, Constants.kError32603);
+                errorCode.put(Constants.kMessageField, "Read data failed");
+
+                parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
+                response.put(Constants.kResult, Constants.kGetCharacteristicValue);
+
+                response.put(Constants.kParams, parameters);
+                response.put(Constants.kError, errorCode);
+
+                sendResponse(response);
+            } catch (JSONException je) {
+                je.printStackTrace();
             }
         }
+    }
 
-    };
+    @Override
+    public void onDeviceAttributeWrite(String deviceIdentifier, String serviceIdentifier, String attribIdentifier, int status)
+    {
+        JSONObject parameters = new JSONObject();
+        JSONObject response = new JSONObject();
+
+        String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(attribIdentifier.toUpperCase(Locale.getDefault()));
+
+
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            try {
+                parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
+                parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+
+                response.put(Constants.kResult, Constants.kWriteCharacteristicValue);
+                response.put(Constants.kParams, parameters);
+
+                sendResponse(response);
+            } catch (JSONException je) {
+                je.printStackTrace();
+            }
+        } else {
+            // send error message when write characteristic not supported for
+            // specified data
+            try {
+                JSONObject errorCode = new JSONObject();
+
+                parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
+                parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+
+                errorCode.put(Constants.kCode, Constants.kError32603);
+                errorCode.put(Constants.kMessageField, "Write data failed");
+
+                response.put(Constants.kResult, Constants.kWriteCharacteristicValue);
+                response.put(Constants.kParams, parameters);
+                response.put(Constants.kError, errorCode);
+
+                sendResponse(response);
+            } catch (JSONException je) {
+                je.printStackTrace();
+            }
+        }
+    }
+
+    @Override
+    public void onDeviceAttributeChanged(String deviceIdentifier, String serviceIdentifier, String attribIdentifier, byte[] attribValue, int status)
+    {
+        JSONObject response = new JSONObject();
+        JSONObject parameters = new JSONObject();
+
+        String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(attribIdentifier.toUpperCase(Locale.getDefault()));
+        String serviceUUISString = Util.ConvertUUID_128bitInto16bit(serviceIdentifier.toUpperCase(Locale.getDefault()));
+        String characteristicValueString = Util.byteArrayToHex(attribValue);
+
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            try {
+                parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
+                parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+                parameters.put(Constants.kServiceUUID, serviceUUISString);
+                parameters.put(Constants.kIsNotifying, m_isNotifying);
+                parameters.put(Constants.kValue, characteristicValueString);
+
+                response.put(Constants.kResult, Constants.kSetValueNotification);
+                response.put(Constants.kParams, parameters);
+
+                sendResponse(response, true);
+            } catch (JSONException je) {
+                je.printStackTrace();
+            }
+        } else {
+            // error occur when we set notification for a characteristic
+            try {
+                JSONObject errorCode = new JSONObject();
+
+                parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
+                parameters.put(Constants.kServiceUUID, serviceIdentifier);
+                parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+
+                errorCode.put(Constants.kCode, Constants.kError32603);
+                errorCode.put(Constants.kMessageField, "");
+
+                response.put(Constants.kResult, Constants.kSetValueNotification);
+                response.put(Constants.kParams, parameters);
+                response.put(Constants.kError, errorCode);
+
+                sendResponse(response);
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    @Override
+    public void onDeviceAttributeDescriptors(String deviceIdentifier, String serviceIdentifier, String attribIdentifier, List attribDescriptors)
+    {
+        JSONObject parameters = new JSONObject();
+        JSONObject response = new JSONObject();
+        List<JSONObject> descriptorArray = Util.listOfJsonDescriptorsFrom(attribDescriptors);
+        String characteristicUUIDString = Util.ConvertUUID_128bitInto16bit(attribIdentifier.toUpperCase(Locale.getDefault()));
+        String serviceUUISString = Util.ConvertUUID_128bitInto16bit(serviceIdentifier.toUpperCase(Locale.getDefault()));
+
+        try {
+            parameters.put(Constants.kCharacteristicUUID, characteristicUUIDString);
+            parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+            parameters.put(Constants.kServiceUUID, serviceUUISString);
+            parameters.put(Constants.kDescriptors, new JSONArray(descriptorArray));
+
+            response.put(Constants.kResult, Constants.kGetDescriptors);
+            response.put(Constants.kParams, parameters);
+
+            sendResponse(response);
+        } catch (JSONException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    @Override
+    public void onDeviceAttributeDescriptorRead(String deviceIdentifier, String serviceIdentifier, String attribIdentifier, String attribDescriptorIdentifier, byte[] attributeDescriptorValue, int status)
+    {
+        JSONObject response = new JSONObject();
+        JSONObject parameters = new JSONObject();
+
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            try {
+                String descriptorValue = new String(attributeDescriptorValue, "UTF-8");
+
+                parameters.put(Constants.kDescriptorUUID, attribDescriptorIdentifier);
+                parameters.put(Constants.kValue, descriptorValue);
+
+                response.put(Constants.kResult,Constants.kGetDescriptorValue);
+                response.put(Constants.kParams, parameters);
+
+                sendResponse(response);
+            } catch (UnsupportedEncodingException | JSONException e) {
+                e.printStackTrace();
+            }
+        } else {
+            try {
+                JSONObject errorObj = new JSONObject();
+
+                errorObj.put(Constants.kCode, Constants.kError32603);
+                errorObj.put(Constants.kMessageField, "");
+
+                parameters.put(Constants.kDescriptorUUID, attribDescriptorIdentifier);
+
+                response.put(Constants.kResult, Constants.kGetDescriptorValue);
+                response.put(Constants.kError, errorObj);
+                response.put(Constants.kParams, parameters);
+
+                sendResponse(response);
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    @Override
+    public void onDeviceAttributeDescriptoWrite(String deviceIdentifier, String serviceIdentifier, String attribIdentifier, String attribDescriptorIdentifier, int status)
+    {
+        try {
+            JSONObject response = new JSONObject();
+            JSONObject parameters = new JSONObject();
+            String method = m_current_request.getString(Constants.kMethod);
+
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                if (method.equals(Constants.kSetValueNotification)) {
+                    parameters.put(Constants.kIsNotifying, m_isNotifying);
+                    parameters.put(Constants.kCharacteristicUUID, attribIdentifier);
+                    parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+                    parameters.put(Constants.kServiceUUID, serviceIdentifier);
+
+                    response.put(Constants.kResult, Constants.kSetValueNotification);
+                    response.put(Constants.kParams, parameters);
+
+                    sendResponse(response);
+                } else if (method.equals(Constants.kWriteDescriptorValue)) {
+                    parameters.put(Constants.kCharacteristicUUID, attribIdentifier);
+                    parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+                    parameters.put(Constants.kServiceUUID, serviceIdentifier);
+
+                    response.put(Constants.kResult, Constants.kWriteDescriptorValue);
+                    response.put(Constants.kParams, parameters);
+
+                    sendResponse(response);
+                }
+            } else {
+                sendReasonForFailedCall(method, getRequestID(m_current_request));
+            }
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
+    public void onDeviceSignal(String deviceIdentifier, String deviceName, int signal, int status)
+    {
+        JSONObject response = new JSONObject();
+        JSONObject parameters = new JSONObject();
+
+        if (status == BluetoothGatt.GATT_SUCCESS) {
+            try {
+                response.put(Constants.kResult, Constants.kGetRSSI);
+                parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+
+                if(deviceName != null) {
+                    parameters.put(Constants.kPeripheralName, deviceName);
+                } else {
+                    parameters.put(Constants.kPeripheralName, "");
+                }
+
+                parameters.put(Constants.kRSSIkey, signal);
+                response.put(Constants.kParams, parameters);
+                sendResponse(response);
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        } else {
+            try {
+                JSONObject errorObj = new JSONObject();
+
+                errorObj.put(Constants.kCode, Constants.kError32603);
+                errorObj.put(Constants.kMessageField, "");
+
+                parameters.put(Constants.kPeripheralUUID, deviceIdentifier);
+
+                if (deviceName != null) {
+                    parameters.put(Constants.kPeripheralName, deviceName);
+                } else {
+                    parameters.put(Constants.kPeripheralName, "");
+                }
+
+                response.put(Constants.kResult, Constants.kGetRSSI);
+                response.put(Constants.kError, errorObj);
+                response.put(Constants.kParams, parameters);
+
+                sendResponse(response);
+            } catch (JSONException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    @Override
+    public void onError(Enum error)
+    {
+        try {
+            String requestId = getRequestID(this.m_current_request);
+            String method = this.m_current_request.getString(Constants.kMethod);
+
+            if(error.equals(InterfaceService.Error.DEVICE_NOT_FOUND)){
+                sendPeripheralNotFoundErrorMessage(method, requestId);
+            } else if(error.equals(InterfaceService.Error.DEVICE_SERVICE_NOT_FOUND)) {
+                sendServiceNotFoundErrorMessage(method, requestId);
+            } else if(error.equals(InterfaceService.Error.DEVICE_ATTRIBUTES_NOT_FOUND)) {
+                sendCharacteristicNotFoundErrorMessage(method, requestId);
+            } else if(error.equals(InterfaceService.Error.ATTRIBUTE_DESCRIPTOR_NOT_FOUND)) {
+                sendDescriptorNotFoundErrorMessage(method, requestId);
+            } else if(error.equals(InterfaceService.Error.ATTRIBUTE_READ_FAILED)) {
+
+            } else if(error.equals(InterfaceService.Error.ATTRIBUTE_WRITE_FAILED)) {
+
+            } else if(error.equals(InterfaceService.Error.ATTRIBUTE_DESCRIPTOR_READ_FAILED)) {
+
+            } else if(error.equals(InterfaceService.Error.ATTRIBUTE_DESCRIPTOR_WRITE_FAILED)) {
+
+            } else if(error.equals(InterfaceService.Error.PERMISSOIN_DENIED)) {
+
+            } else if(error.equals(InterfaceService.Error.CONNECTION_FAILED)) {
+
+            }
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+    }
 }

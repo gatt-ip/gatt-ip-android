@@ -11,7 +11,7 @@ public class Constants {
 	public static final String kCode                               = "code";
 	public static final String kMessageField                       = "message";
 	public static final String kResult                             = "result";
-	public static final String kIdField                            = "id";
+	public static final String kRequestId                          = "id";
 
 	//-------------------------------------- Methods ----------------------------------------
 	//Central Methods
