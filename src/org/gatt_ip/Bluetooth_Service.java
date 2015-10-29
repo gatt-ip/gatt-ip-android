@@ -15,8 +15,8 @@ import android.util.Log;
 import java.util.ArrayList;
 import java.util.UUID;
 
-public class BluetoothService extends Service {
-    private static final String TAG = BluetoothService.class.getName();
+public class Bluetooth_Service extends Service {
+    private static final String TAG = Bluetooth_Service.class.getName();
 
     private final ArrayList<BluetoothListener> mListeners = new ArrayList<>();
 
@@ -82,23 +82,33 @@ public class BluetoothService extends Service {
 
     }
 
-    public void setValueNotification(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, Boolean subscribeBOOL) {
+    public void setValueNotification(BluetoothGatt gatt, BluetoothGattCharacteristic characteristic, Boolean subscribeBOOL)
+    {
+        boolean status = false;
+
         // set notification for characteristic
-        if (!gatt.setCharacteristicNotification(characteristic,subscribeBOOL)) // returns true
-            Log.v("GATT-IP", "Setup failed.");
+        if (!gatt.setCharacteristicNotification(characteristic,subscribeBOOL)) {
+            Log.e(TAG, "Characteristic notification set failure.");
+        }
+
         // client characteristic configuration.
         UUID descUUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
         BluetoothGattDescriptor desc = characteristic.getDescriptor(descUUID);
-        // check whether characteristic having notify or indicate
-        // property
+
+        // check whether characteristic having notify or indicate property
         if ((characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_INDICATE) > 0) {
-            desc.setValue(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE);
+            status = desc.setValue(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE);
         } else {
-            desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            status = desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
         }
 
-        if (!gatt.writeDescriptor(desc)) // returns true
-            Log.v("GATT-IP", "write error");
+        if (!status) {
+            Log.e(TAG, "### Descriptor setvalue fail ###");
+        } else {
+            if (!gatt.writeDescriptor(desc)) {
+                Log.e(TAG, "Descriptor write failed.");
+            }
+        }
     }
 
     public void readDescriptorValue(BluetoothGatt gatt, BluetoothGattDescriptor desc) {
@@ -173,8 +183,8 @@ public class BluetoothService extends Service {
     };
 
     public class BluetoothBinder extends Binder {
-        public BluetoothService getService() {
-            return BluetoothService.this;
+        public Bluetooth_Service getService() {
+            return Bluetooth_Service.this;
         }
     }
 }

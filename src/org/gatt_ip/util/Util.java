@@ -1,6 +1,5 @@
-package org.gatt_ip;
+package org.gatt_ip.util;
 
-import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothGatt;
 import android.bluetooth.BluetoothGattCharacteristic;
@@ -8,6 +7,8 @@ import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
 
+import org.gatt_ip.Constants;
+import org.gatt_ip.InterfaceService;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -44,7 +45,7 @@ public class Util {
     }
     
     //get the bluetooth device from list of devcie for a specific address
-    public static BluetoothGatt peripheralIn(ArrayList<BluetoothGatt> peripheralCollection, String deviceAddress)
+    public static BluetoothGatt peripheralIn(List<BluetoothGatt> peripheralCollection, String deviceAddress)
     {
         BluetoothGatt gatt = null;
         for(BluetoothGatt bGatt : peripheralCollection)
@@ -58,9 +59,9 @@ public class Util {
         return gatt;
     }
     
-    public static HashMap<BluetoothGatt, BluetoothGattService> serviceIn (ArrayList<BluetoothGatt> peripheralCollection, UUID serviceUUID)
+    public static HashMap<BluetoothGatt, BluetoothGattService> serviceIn (List<BluetoothGatt> peripheralCollection, UUID serviceUUID)
     {
-        HashMap<BluetoothGatt, BluetoothGattService> servicesList = null;
+        HashMap<BluetoothGatt, BluetoothGattService> servicesList = new HashMap<BluetoothGatt, BluetoothGattService>();
         for(BluetoothGatt bGatt : peripheralCollection)
         {
             List<BluetoothGattService> gattservices = bGatt.getServices();
@@ -70,7 +71,6 @@ public class Util {
                 BluetoothGattService service = iterator.next();
                 if(service.getUuid().equals(serviceUUID))
                 {
-                    servicesList = new HashMap<BluetoothGatt, BluetoothGattService>();
                     servicesList.put(bGatt, service);
                 }
             }
@@ -78,7 +78,7 @@ public class Util {
         return servicesList;
     }
     
-    public static HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristicIn (ArrayList<BluetoothGatt> peripheralCollection , UUID characteristicUUID)
+    public static HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristicIn (List<BluetoothGatt> peripheralCollection , UUID characteristicUUID)
     {
         HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristicsList = null;
         for(BluetoothGatt bGatt : peripheralCollection)
@@ -104,7 +104,7 @@ public class Util {
         return characteristicsList;
     }
     
-    public static HashMap<BluetoothGatt, BluetoothGattDescriptor> descriptorIn (ArrayList<BluetoothGatt> peripheralCollection ,UUID descriptorUUID)
+    public static HashMap<BluetoothGatt, BluetoothGattDescriptor> descriptorIn (List<BluetoothGatt> peripheralCollection ,UUID descriptorUUID)
     {
         HashMap<BluetoothGatt, BluetoothGattDescriptor> descriptorsList = null;
         for(BluetoothGatt bGatt : peripheralCollection)
@@ -219,7 +219,7 @@ public class Util {
         return listOfServcieUUIDs;
     }
 
-    public static List<BluetoothGatt> retrieveConnectedPeripheralsWithServices(ArrayList<BluetoothGatt> mConnectedDevices, List<String> listOfServcieUUIDStrings) {
+    public static List<BluetoothGatt> retrieveConnectedPeripheralsWithServices(List<BluetoothGatt> mConnectedDevices, List<String> listOfServcieUUIDStrings) {
 
         List<BluetoothGatt> peripheralsWithServcies = new ArrayList<>();
         for(int i = 0; i < mConnectedDevices.size(); i++) {
@@ -250,7 +250,7 @@ public class Util {
         return listOfPeripheralUUIDs;
     }
 
-    public static List<BluetoothGatt> retrievePeripheralsWithIdentifiers(ArrayList<BluetoothGatt> mConnectedDevices, List<String> listOfperipheralUUIDStrings) {
+    public static List<BluetoothGatt> retrievePeripheralsWithIdentifiers(List<BluetoothGatt> mConnectedDevices, List<String> listOfperipheralUUIDStrings) {
         List<BluetoothGatt> peripheralsWithIdentifiers = new ArrayList<>();
         for(int i = 0; i < mConnectedDevices.size(); i++) {
             BluetoothGatt gatt = mConnectedDevices.get(i);
@@ -264,17 +264,25 @@ public class Util {
         return peripheralsWithIdentifiers;
     }
 
-    public static String centralStateStringFromCentralState(int centralState)
+    public static String centralStateStringFromCentralState(InterfaceService.ServiceState state)
     {
-        switch(centralState)
-        {
-            case BluetoothAdapter.STATE_OFF :
-                return Constants.kPoweredOff;
-            case BluetoothAdapter.STATE_ON :
-                return Constants.kPoweredOn;
-            default :
-                return "";
+        String state_string = "";
+
+        switch(state) {
+            case SERVICE_STATE_NONE:
+                state_string = Constants.kUnknown;
+                break;
+            case SERVICE_STATE_INACTIVE:
+                state_string = Constants.kPoweredOff;
+                break;
+            case SERVICE_STATE_ACTIVE:
+                state_string = Constants.kPoweredOn;
+                break;
+            case SERVICE_STATE_UNSUPPORTED:
+                state_string = Constants.kUnsupported;
+                break;
         }
+        return state_string;
     }
 
     public static String writeTypeForCharacteristicGiven(String writeType)
@@ -307,6 +315,17 @@ public class Util {
             data[i / 2] = (byte) ((Character.digit(hex.charAt(i), 16) << 4) + Character.digit(hex.charAt(i+1), 16));
         }
         return data;
+    }
+
+    public static String hexToASCII(String hexValue)
+    {
+        StringBuilder output = new StringBuilder("");
+        for (int i = 0; i < hexValue.length(); i += 2)
+        {
+            String str = hexValue.substring(i, i + 2);
+            output.append((char) Integer.parseInt(str, 16));
+        }
+        return output.toString();
     }
 
     public static String ConvertUUID_128bitInto16bit(String UUIDString) {
