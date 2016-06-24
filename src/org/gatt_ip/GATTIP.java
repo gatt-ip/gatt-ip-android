@@ -172,8 +172,7 @@ public class GATTIP implements ServiceConnection, DeviceEventListener
 
     private void sendResponse(JSONObject jsonData, boolean notification) throws JSONException
     {
-        String request, response;
-
+        String request="", response = "";
 
         if (m_listener == null) {
             return;
@@ -186,9 +185,10 @@ public class GATTIP implements ServiceConnection, DeviceEventListener
 
         jsonData.put(Constants.kJsonrpc, Constants.kJsonrpcVersion);
 
-
-        request = m_current_request.getString(Constants.kMethod);
-        response = jsonData.getString(Constants.kResult);
+        if(m_current_request.has(Constants.kMethod))
+            request = m_current_request.getString(Constants.kMethod);
+        if(jsonData.has(Constants.kResult))
+            response = jsonData.getString(Constants.kResult);
 
         if (request.equals(response) && !notification) {
             String requestID = getRequestID(m_current_request);
