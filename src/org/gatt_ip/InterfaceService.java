@@ -34,6 +34,7 @@ public abstract class InterfaceService extends Service {
 
         ATTRIBUTE_READ_FAILED,
         ATTRIBUTE_WRITE_FAILED,
+        ATTRIBUTE_NOTIFICATION_FAILED,
 
         ATTRIBUTE_DESCRIPTOR_READ_FAILED,
         ATTRIBUTE_DESCRIPTOR_WRITE_FAILED,
@@ -104,7 +105,7 @@ public abstract class InterfaceService extends Service {
 
     public abstract void writeDeviceAttributeValue(String attributeIdentifier, String writeType, byte[] data);
 
-    public abstract void getDeviceAttributeDescriptorValue(String attributeDescriptorIdentifier);
+    public abstract void getDeviceAttributeDescriptorValue(String attributeDescriptorIdentifier, String attributeIdentifier, String serviceIdentifier);
 
     public abstract void writeDeviceAttributeDescriptorValue(String attributeDescriptorIdentifier, byte[] data);
 

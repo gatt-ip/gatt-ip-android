@@ -12,6 +12,7 @@ public class Constants {
 	public static final String kMessageField                       = "message";
 	public static final String kResult                             = "result";
 	public static final String kRequestId                          = "id";
+	public static final String kRequestSessionId                   = "session_id";
 
 	//-------------------------------------- Methods ----------------------------------------
 	//Central Methods
@@ -75,19 +76,19 @@ public class Constants {
 
 	//Advertisment Data for Peripheral Keys
 	public static final String kAdvertisementDataKey                           = "b2";
-	public static final String kCBAdvertisementDataManufacturerDataKey         = "b3";
-	public static final String kCBAdvertisementDataServiceUUIDsKey             = "b4";
-	public static final String kCBAdvertisementDataServiceDataKey              = "b5";
+	public static final String kCBAdvertisementDataManufacturerDataKey         = "mfr";
+	public static final String kCBAdvertisementDataServiceUUIDsKey             = "suu";
+	public static final String kCBAdvertisementDataServiceDataKey              = "sdt";
 	public static final String kCBAdvertisementDataOverflowServiceUUIDsKey     = "b6";
 	public static final String kCBAdvertisementDataSolicitedServiceUUIDsKey    = "b7";
 	public static final String kCBAdvertisementDataIsConnectable               = "b8";
-	public static final String kCBAdvertisementDataTxPowerLevel                = "b9";
+	public static final String kCBAdvertisementDataTxPowerLevel                = "txp";
 	public static final String kPeripheralBtAddress                            = "c1";
-    public static final String kRawAdvertisementData                           = "c2";
-    public static final String kScanRecord                                     = "c3";
+	public static final String kRawAdvertisementData                           = "c2";
+	public static final String kScanRecord                                     = "c3";
 
 
-    //Will Restore State Keys
+	//Will Restore State Keys
 	public static final String kCBCentralManagerRestoredStatePeripheralsKey    = "da";
 	public static final String kCBCentralManagerRestoredStateScanServicesKey   = "db";
 
@@ -128,13 +129,13 @@ public class Constants {
 	public static final String kError32603                     = "-32603";
 	public static final String kParseError                     = "-32700";
 
-    public static final String kGAP_ADTYPE_FLAGS                            = "01";
-    public static final String kGAP_ADTYPE_INCOMPLETE_16BIT_SERVICEUUID     = "02";
-    public static final String kGAP_ADTYPE_COMPLETE_16BIT_SERVICEUUID       = "03";
-    public static final String kGAP_ADTYPE_INCOMPLETE_32BIT_SERVICEUUID     = "04";
-    public static final String kGAP_ADTYPE_COMPLETE_32BIT_SERVICEUUID       = "05";
-    public static final String kGAP_ADTYPE_INCOMPLETE_128BIT_SERVICEUUID    = "06";
-    public static final String kGAP_ADTYPE_COMPLETE_128BIT_SERVICEUUID      = "07";
-    public static final String kGAP_ADTYPE_POWER_LEVEL                      = "0A";
-    public static final String kGAP_ADTYPE_MANUFACTURER_SPECIFIC            = "FF";
+	public static final String kGAP_ADTYPE_FLAGS                            = "01";
+	public static final String kGAP_ADTYPE_INCOMPLETE_16BIT_SERVICEUUID     = "02";
+	public static final String kGAP_ADTYPE_COMPLETE_16BIT_SERVICEUUID       = "03";
+	public static final String kGAP_ADTYPE_INCOMPLETE_32BIT_SERVICEUUID     = "04";
+	public static final String kGAP_ADTYPE_COMPLETE_32BIT_SERVICEUUID       = "05";
+	public static final String kGAP_ADTYPE_INCOMPLETE_128BIT_SERVICEUUID    = "06";
+	public static final String kGAP_ADTYPE_COMPLETE_128BIT_SERVICEUUID      = "07";
+	public static final String kGAP_ADTYPE_POWER_LEVEL                      = "0A";
+	public static final String kGAP_ADTYPE_MANUFACTURER_SPECIFIC            = "FF";
 }

@@ -3,6 +3,7 @@ package org.gatt_ip.lescanner;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
+import android.bluetooth.le.ScanRecord;
 import android.content.Context;
 import android.util.Log;
 import org.gatt_ip.Constants;
@@ -165,6 +166,6 @@ public abstract class BluetoothLEScanner {
 
 
     public interface LEScanListener {
-        public void onLeScan(BluetoothDevice device, int rssi, byte[] adevertismentData);
+        public void onLeScan(BluetoothDevice device, int rssi, ScanRecord record, byte[] adevertismentData);
     }
 }

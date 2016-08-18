@@ -6,6 +6,7 @@ import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
+import android.os.ParcelUuid;
 
 import org.gatt_ip.Constants;
 import org.gatt_ip.InterfaceService;
@@ -14,7 +15,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.ConcurrentModificationException;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Locale;
@@ -23,7 +26,7 @@ import java.math.BigInteger;
 import java.math.BigDecimal;
 
 public class Util {
-    
+
     public static String peripheralStateStringFromPeripheralState(BluetoothGatt gatt)
     {
         switch(gatt.getConnectionState(gatt.getDevice()))
@@ -38,12 +41,12 @@ public class Util {
                 return null;
         }
     }
-    
+
     public static String peripheralUUIDStringFromPeripheral(BluetoothDevice device)
     {
         return device.getAddress();
     }
-    
+
     //get the bluetooth device from list of devcie for a specific address
     public static BluetoothGatt peripheralIn(List<BluetoothGatt> peripheralCollection, String deviceAddress)
     {
@@ -58,7 +61,7 @@ public class Util {
         }
         return gatt;
     }
-    
+
     public static HashMap<BluetoothGatt, BluetoothGattService> serviceIn (List<BluetoothGatt> peripheralCollection, UUID serviceUUID)
     {
         HashMap<BluetoothGatt, BluetoothGattService> servicesList = new HashMap<BluetoothGatt, BluetoothGattService>();
@@ -77,7 +80,7 @@ public class Util {
         }
         return servicesList;
     }
-    
+
     public static HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristicIn (List<BluetoothGatt> peripheralCollection , UUID characteristicUUID)
     {
         HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristicsList = null;
@@ -103,39 +106,45 @@ public class Util {
         }
         return characteristicsList;
     }
-    
+
     public static HashMap<BluetoothGatt, BluetoothGattDescriptor> descriptorIn (List<BluetoothGatt> peripheralCollection ,UUID descriptorUUID)
     {
         HashMap<BluetoothGatt, BluetoothGattDescriptor> descriptorsList = null;
-        for(BluetoothGatt bGatt : peripheralCollection)
-        {
-            List<BluetoothGattService> gattservices = bGatt.getServices();
-            ListIterator<BluetoothGattService> iterator = null;
-            iterator = gattservices.listIterator();
-            while (iterator.hasNext()) {
-                BluetoothGattService service = iterator.next();
-                List<BluetoothGattCharacteristic> characteristics = service.getCharacteristics();
-                ListIterator< BluetoothGattCharacteristic> itr;
-                itr = characteristics.listIterator();
-                while (itr.hasNext()) {
-                    BluetoothGattCharacteristic characteristic = itr.next();
-                    List<BluetoothGattDescriptor> descriptors = characteristic.getDescriptors();
-                    ListIterator<BluetoothGattDescriptor> listitr = null;
-                    listitr = descriptors.listIterator();
-                    while (listitr.hasNext()) {
-                        BluetoothGattDescriptor descriptor = listitr.next();
-                        if(descriptor.getUuid().equals(descriptorUUID))
-                        {
-                            descriptorsList = new HashMap<BluetoothGatt, BluetoothGattDescriptor>();
-                            descriptorsList.put(bGatt, descriptor);
+        try {
+            Iterator<BluetoothGatt> desc_iterator = peripheralCollection.iterator();
+            while (desc_iterator.hasNext()){
+                BluetoothGatt bGatt = desc_iterator.next();
+                List<BluetoothGattService> gattservices = bGatt.getServices();
+                ListIterator<BluetoothGattService> iterator = null;
+                iterator = gattservices.listIterator();
+                while (iterator.hasNext()) {
+                    BluetoothGattService service = iterator.next();
+                    List<BluetoothGattCharacteristic> characteristics = service.getCharacteristics();
+                    ListIterator< BluetoothGattCharacteristic> itr;
+                    itr = characteristics.listIterator();
+                    while (itr.hasNext()) {
+                        BluetoothGattCharacteristic characteristic = itr.next();
+                        List<BluetoothGattDescriptor> descriptors = characteristic.getDescriptors();
+                        ListIterator<BluetoothGattDescriptor> listitr = null;
+                        listitr = descriptors.listIterator();
+                        while (listitr.hasNext()) {
+                            BluetoothGattDescriptor descriptor = listitr.next();
+                            if(descriptor.getUuid().equals(descriptorUUID))
+                            {
+                                descriptorsList = new HashMap<BluetoothGatt, BluetoothGattDescriptor>();
+                                descriptorsList.put(bGatt, descriptor);
+                            }
                         }
                     }
                 }
             }
+
+        } catch (ConcurrentModificationException ex) {
+            ex.printStackTrace();
         }
         return descriptorsList;
     }
-    
+
     public static List<JSONObject> listOfJsonServicesFrom(List<BluetoothGattService> services)
     {
         List<JSONObject> jsonList = new ArrayList<JSONObject>();
@@ -151,17 +160,17 @@ public class Util {
                 isPrimary = 0;
             String serviceUUIDString = service.getUuid().toString().toUpperCase(Locale.getDefault());
             try {
-                jsonObj.put(Constants.kServiceUUID,ConvertUUID_128bitInto16bit(serviceUUIDString));
+                jsonObj.put(Constants.kServiceUUID, ConvertUUID_128bitInto16bit(serviceUUIDString));
                 jsonObj.put(Constants.kIsPrimaryKey, isPrimary);
                 jsonList.add(jsonObj);
-                
+
             } catch (JSONException e) {
                 e.printStackTrace();
             }
         }
         return jsonList;
     }
-    
+
     public static List<JSONObject> listOfJsonCharacteristicsFrom (List<BluetoothGattCharacteristic> characteristics)
     {
         List<JSONObject> jsonList = new ArrayList<JSONObject>();
@@ -175,7 +184,7 @@ public class Util {
             if(characteristcProperty.equals("34"))
                 characteristcProperty = "18";
             try {
-                jsonObj.put(Constants.kCharacteristicUUID,ConvertUUID_128bitInto16bit(characterisUUIDString));
+                jsonObj.put(Constants.kCharacteristicUUID, ConvertUUID_128bitInto16bit(characterisUUIDString));
                 jsonObj.put(Constants.kIsNotifying, 0);
                 jsonObj.put(Constants.kProperties, characteristcProperty);
                 jsonObj.put(Constants.kValue, "");
@@ -186,7 +195,7 @@ public class Util {
         }
         return jsonList;
     }
-    
+
     public static List<JSONObject> listOfJsonDescriptorsFrom(List<BluetoothGattDescriptor> descriptors)
     {
         List<JSONObject> jsonList = new ArrayList<JSONObject>();
@@ -197,13 +206,23 @@ public class Util {
             BluetoothGattDescriptor descriptor = iterator.next();
             String descriptorUUIDString = descriptor.getUuid().toString().toUpperCase(Locale.getDefault());
             try {
-                jsonObj.put(Constants.kDescriptorUUID,ConvertUUID_128bitInto16bit(descriptorUUIDString));
+                jsonObj.put(Constants.kDescriptorUUID, ConvertUUID_128bitInto16bit(descriptorUUIDString));
                 jsonList.add(jsonObj);
             } catch (JSONException e) {
                 e.printStackTrace();
             }
         }
         return jsonList;
+    }
+
+    public static JSONArray arrayOfServiceUUIDStringsFrom(List<ParcelUuid> listOfServiceUUIDStrings) {
+
+        JSONArray serviceUUIDsArray = new JSONArray();
+        for(int i = 0; i < listOfServiceUUIDStrings.size(); i++) {
+            String servcieUUID = ConvertUUID_128bitInto16bit(listOfServiceUUIDStrings.get(i).toString());
+            serviceUUIDsArray.put(servcieUUID);
+        }
+        return serviceUUIDsArray;
     }
 
     public static List<String> listOfServiceUUIDStringsFrom(JSONArray listOfServiceUUIDStrings) {
@@ -289,7 +308,7 @@ public class Util {
     {
 
         if(writeType.equals(Constants.kWriteWithoutResponse))
-             return Constants.kWriteWithoutResponse;
+            return Constants.kWriteWithoutResponse;
         else
             return Constants.kWriteWithResponse;
     }
@@ -374,7 +393,7 @@ public class Util {
         return reqValueFinal_128bit.toUpperCase(Locale.getDefault());
     }
 
-   public static String humanReadableFormatFromHex(String hexString)
+    public static String humanReadableFormatFromHex(String hexString)
     {
         HashMap<String, String> methods = new HashMap<String, String>();
         methods.put(Constants.kConfigure, "Configure");
@@ -458,7 +477,7 @@ public class Util {
         values.put(Constants.kUnsupported, "Unauthorized");
         values.put(Constants.kPoweredOff, "PoweredOff");
         values.put(Constants.kPoweredOn, "PoweredOn");
-        
+
         if(methods.get(hexString) != null)
         {
             return methods.get(hexString);
@@ -472,10 +491,8 @@ public class Util {
         {
             return hexString;
         } else
-            return "";			
-        
+            return "";
+
     }
-    
+
 }
-
-

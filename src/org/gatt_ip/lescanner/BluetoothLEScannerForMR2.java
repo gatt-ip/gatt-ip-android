@@ -108,7 +108,7 @@ public final class BluetoothLEScannerForMR2 extends BluetoothLEScanner {
                     scanRed[i] = wrapped.get(i);
                 }
 
-                mListener.onLeScan(device, rssi, scanRed);
+                mListener.onLeScan(device, rssi, null/*ScanRecord record*/, scanRed);
             }
         }
     };

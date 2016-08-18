@@ -8,6 +8,7 @@ import android.bluetooth.BluetoothGattCharacteristic;
 import android.bluetooth.BluetoothGattDescriptor;
 import android.bluetooth.BluetoothGattService;
 import android.bluetooth.BluetoothProfile;
+import android.bluetooth.le.ScanRecord;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -23,8 +24,11 @@ import org.gatt_ip.lescanner.BluetoothLEScannerForMR2;
 import org.gatt_ip.util.Util;
 
 import java.util.ArrayList;
+import java.util.ConcurrentModificationException;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
+import java.util.ListIterator;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
@@ -54,7 +58,7 @@ public class BluetoothLEService extends InterfaceService {
     @Override
     public void onCreate() {
         super.onCreate();
-        bluetoothAdapterState();
+        getBluetoothAdapterState();
     }
 
     @Override
@@ -111,9 +115,7 @@ public class BluetoothLEService extends InterfaceService {
             } else {
                 m_le_scanner = new BluetoothLEScannerForMR2(this.getApplicationContext(), duplicates);
             }
-
             m_le_scanner.registerScanListener(m_le_scan_listener);
-
             m_le_scanner.startLEScan();
         }
     }
@@ -134,12 +136,17 @@ public class BluetoothLEService extends InterfaceService {
 
     @Override
     public void disconnectDevice(String deviceIdentifier) {
-        for (BluetoothGatt gatt : m_connected_devices) {
-            BluetoothDevice device = gatt.getDevice();
-
-            if (device.getAddress().equals(deviceIdentifier)) {
-                gatt.disconnect();
+        try {
+            Iterator<BluetoothGatt> iterator = m_connected_devices.iterator();
+            while (iterator.hasNext()){
+                BluetoothGatt gatt = iterator.next();
+                BluetoothDevice device = gatt.getDevice();
+                if (device.getAddress().equals(deviceIdentifier)) {
+                    gatt.disconnect();
+                }
             }
+        } catch (ConcurrentModificationException ex) {
+            ex.printStackTrace();
         }
     }
 
@@ -151,9 +158,9 @@ public class BluetoothLEService extends InterfaceService {
             for(DeviceEventListener listener : m_listeners) {
                 listener.onError(Error.DEVICE_NOT_FOUND);
             }
+        } else {
+            gatt.discoverServices();
         }
-
-        gatt.discoverServices();
     }
 
     @Override
@@ -171,18 +178,18 @@ public class BluetoothLEService extends InterfaceService {
             for(DeviceEventListener listener : m_listeners) {
                 listener.onError(Error.DEVICE_NOT_FOUND);
             }
-        }
+        } else {
+            BluetoothGattService requestedService = requestedPeripheralAndService.get(gatt);
 
-        BluetoothGattService requestedService = requestedPeripheralAndService.get(gatt);
-
-        if (requestedService == null) {
-            for(DeviceEventListener listener : m_listeners) {
-                listener.onError(Error.DEVICE_SERVICE_NOT_FOUND);
+            if (requestedService == null) {
+                for(DeviceEventListener listener : m_listeners) {
+                    listener.onError(Error.DEVICE_SERVICE_NOT_FOUND);
+                }
+            } else {
+                for (DeviceEventListener listener : m_listeners) {
+                    listener.onDeviceAttributes(gatt.getDevice().getAddress(), requestedService.getUuid().toString(), requestedService.getCharacteristics());
+                }
             }
-        }
-
-        for (DeviceEventListener listener : m_listeners) {
-            listener.onDeviceAttributes(gatt.getDevice().getAddress(), requestedService.getUuid().toString(), requestedService.getCharacteristics());
         }
     }
 
@@ -201,81 +208,100 @@ public class BluetoothLEService extends InterfaceService {
             for(DeviceEventListener listener : m_listeners) {
                 listener.onError(Error.DEVICE_NOT_FOUND);
             }
-        }
-
-        BluetoothGattCharacteristic characteristic = peripheralAndCharacteristic.get(gatt);
-
-        if (characteristic == null) {
-            for(DeviceEventListener listener : m_listeners) {
-                listener.onError(Error.DEVICE_ATTRIBUTES_NOT_FOUND);
-            }
-        }
-
-        String peripheralUUID = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
-        String serviceUUID = characteristic.getService().getUuid().toString().toUpperCase(Locale.getDefault());
-        String characteristicUUID = characteristic.getUuid().toString().toUpperCase(Locale.getDefault());
-
-        for(DeviceEventListener listener : m_listeners)
-            listener.onDeviceAttributeDescriptors(peripheralUUID, serviceUUID, characteristicUUID, characteristic.getDescriptors());
-    }
-
-    @Override
-    public void getDeviceAttributeValue(String attributeIdentifier) {
-        UUID characteristicUUID = UUID.fromString(attributeIdentifier);
-        HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristics = Util.characteristicIn(m_connected_devices, characteristicUUID);
-        Set<BluetoothGatt> keySet = characteristics.keySet();
-
-        for (BluetoothGatt gatt : keySet) {
-            BluetoothGattCharacteristic characteristic = characteristics.get(gatt);
+        } else {
+            BluetoothGattCharacteristic characteristic = peripheralAndCharacteristic.get(gatt);
 
             if (characteristic == null) {
                 for(DeviceEventListener listener : m_listeners) {
                     listener.onError(Error.DEVICE_ATTRIBUTES_NOT_FOUND);
                 }
-            }
+            } else {
+                String peripheralUUID = gatt.getDevice().getAddress().toUpperCase(Locale.getDefault());
+                String serviceUUID = characteristic.getService().getUuid().toString().toUpperCase(Locale.getDefault());
+                String characteristicUUID = characteristic.getUuid().toString().toUpperCase(Locale.getDefault());
 
-            gatt.readCharacteristic(characteristic);
+                for(DeviceEventListener listener : m_listeners)
+                    listener.onDeviceAttributeDescriptors(peripheralUUID, serviceUUID, characteristicUUID, characteristic.getDescriptors());
+            }
+        }
+    }
+
+    @Override
+    public void getDeviceAttributeValue(String attributeIdentifier) {
+        UUID characteristicUUID = UUID.fromString(attributeIdentifier);
+        if(m_connected_devices.size() > 0 && characteristicUUID != null) {
+            HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristics = Util.characteristicIn(m_connected_devices, characteristicUUID);
+            Set<BluetoothGatt> keySet = characteristics.keySet();
+
+            for (BluetoothGatt gatt : keySet) {
+                BluetoothGattCharacteristic characteristic = characteristics.get(gatt);
+
+                if (characteristic == null) {
+                    for (DeviceEventListener listener : m_listeners) {
+                        listener.onError(Error.DEVICE_ATTRIBUTES_NOT_FOUND);
+                    }
+                } else {
+                    if(!gatt.readCharacteristic(characteristic)){
+                        Log.e("Read", " ### Failed to Read the characteristic :(");
+                        for (DeviceEventListener listener : m_listeners) {
+                            listener.onError(Error.ATTRIBUTE_READ_FAILED);
+                        }
+                    }
+                }
+            }
         }
     }
 
     @Override
     public void getDeviceAttributeNotifications(String attributeIdentifier, boolean enable) {
         UUID characteristicUUID = UUID.fromString(attributeIdentifier);
-        HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristics = Util.characteristicIn(m_connected_devices, characteristicUUID);
-        Set<BluetoothGatt> keySet = characteristics.keySet();
+        if(m_connected_devices.size()>0 && characteristicUUID!=null) {
 
-        for (BluetoothGatt gatt : keySet) {
-            BluetoothGattCharacteristic characteristic = characteristics.get(gatt);
+            HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristics = Util.characteristicIn(m_connected_devices, characteristicUUID);
+            Set<BluetoothGatt> keySet = characteristics.keySet();
 
-            if (characteristic == null) {
-                for(DeviceEventListener listener : m_listeners) {
-                    listener.onError(Error.DEVICE_ATTRIBUTES_NOT_FOUND);
-                }
-            }
+            for (BluetoothGatt gatt : keySet) {
+                BluetoothGattCharacteristic characteristic = characteristics.get(gatt);
 
-            boolean status = false;
+                if (characteristic == null) {
+                    for(DeviceEventListener listener : m_listeners) {
+                        listener.onError(Error.DEVICE_ATTRIBUTES_NOT_FOUND);
+                    }
+                } else {
+                    boolean status = false;
 
-            // set notification for characteristic
-            if (!gatt.setCharacteristicNotification(characteristic, enable)) {
-                Log.e(TAG, "Characteristic notification set failure.");
-            }
+                    // client characteristic configuration.
+                    UUID descUUID = UUID.fromString(CCC_UUID);
+                    BluetoothGattDescriptor desc = characteristic.getDescriptor(descUUID);
 
-            // client characteristic configuration.
-            UUID descUUID = UUID.fromString(CCC_UUID);
-            BluetoothGattDescriptor desc = characteristic.getDescriptor(descUUID);
+                    // check whether characteristic having notify or indicate property
+                    if ((characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_INDICATE) > 0) {
+                        if(desc!=null){
+                            status = desc.setValue(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE);
+                        }
+                    } else {
+                        if(desc!=null){
+                            status = desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                        }
+                    }
 
-            // check whether characteristic having notify or indicate property
-            if ((characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_INDICATE) > 0) {
-                status = desc.setValue(BluetoothGattDescriptor.ENABLE_INDICATION_VALUE);
-            } else {
-                status = desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-            }
-
-            if (!status) {
-                Log.e(TAG, "### Descriptor setvalue fail ###");
-            } else {
-                if (!gatt.writeDescriptor(desc)) {
-                    Log.e(TAG, "Descriptor write failed.");
+                    if (!status) {
+                        Log.e(TAG, "### Descriptor setvalue fail ###");
+                    } else {
+                        if (!gatt.writeDescriptor(desc)) {
+                            Log.e(TAG, "failed to Write the value into descriptor.");
+                            for (DeviceEventListener listener : m_listeners) {
+                                listener.onError(Error.ATTRIBUTE_DESCRIPTOR_WRITE_FAILED);
+                            }
+                        }
+                    }
+                    // set notification for characteristic
+                    if (!gatt.setCharacteristicNotification(characteristic, enable)) {
+                        Log.e(TAG, "Failed to set the notifications for the Characteristic.");
+                        for (DeviceEventListener listener : m_listeners) {
+                            listener.onError(Error.ATTRIBUTE_NOTIFICATION_FAILED);
+                        }
+                    }
                 }
             }
         }
@@ -284,70 +310,120 @@ public class BluetoothLEService extends InterfaceService {
     @Override
     public void writeDeviceAttributeValue(String attributeIdentifier, String writeType, byte[] data) {
         UUID characteristicUUID = UUID.fromString(attributeIdentifier);
-        HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristics = Util.characteristicIn(m_connected_devices, characteristicUUID);
-        Set<BluetoothGatt> keySet = characteristics.keySet();
 
-        for (BluetoothGatt gatt : keySet) {
-            BluetoothGattCharacteristic characteristic = characteristics.get(gatt);
+        if(m_connected_devices.size()>0 && characteristicUUID!=null){
 
-            if (characteristic == null) {
-                for(DeviceEventListener listener : m_listeners) {
-                    listener.onError(Error.DEVICE_ATTRIBUTES_NOT_FOUND);
+            HashMap<BluetoothGatt, BluetoothGattCharacteristic> characteristics = Util.characteristicIn(m_connected_devices, characteristicUUID);
+            if(characteristics!=null) {
+                Set<BluetoothGatt> keySet = characteristics.keySet();
+
+                for (BluetoothGatt gatt : keySet) {
+                    BluetoothGattCharacteristic characteristic = characteristics.get(gatt);
+
+                    if (characteristic == null) {
+                        for(DeviceEventListener listener : m_listeners) {
+                            listener.onError(Error.DEVICE_ATTRIBUTES_NOT_FOUND);
+                        }
+                    } else {
+                        // TODO: Handle remaining write types, if any
+                        int writType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT;
+                        if((characteristic.getProperties() & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0){
+                            writType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
+                            for (DeviceEventListener listener : m_listeners) {
+                                listener.sendResponseForWriteTypeNoReponse();
+                            }
+                        }
+                        characteristic.setWriteType(writType);
+                        // call to write characteristic
+                        characteristic.setValue(data);
+                        if(!gatt.writeCharacteristic(characteristic)){
+                            Log.e(TAG, "failed to write the Characteristic value.");
+                            for (DeviceEventListener listener : m_listeners) {
+                                listener.onError(Error.ATTRIBUTE_WRITE_FAILED);
+                            }
+                        }
+                    }
                 }
             }
-
-            if (writeType == null) {
-                characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-            } else {
-                if(writeType.equals(Constants.kWriteWithoutResponse)) {
-                    characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
-                } else if (writeType.equals(Constants.kWriteWithResponse)) {
-                    characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
-                }
+        }else{
+            for (DeviceEventListener listener : m_listeners) {
+                listener.noConnectedDevices();
             }
-
-            // call to write characteristic
-            characteristic.setValue(data);
-            gatt.writeCharacteristic(characteristic);
         }
     }
 
     @Override
-    public void getDeviceAttributeDescriptorValue(String attributeDescriptorIdentifier) {
+    public void getDeviceAttributeDescriptorValue(String attributeDescriptorIdentifier, String attributeIdentifier, String serviceIdentifier) {
         UUID descriptorUUID = UUID.fromString(attributeDescriptorIdentifier);
-        HashMap<BluetoothGatt, BluetoothGattDescriptor> descriptors = Util.descriptorIn(m_connected_devices, descriptorUUID);
-        Set<BluetoothGatt> keySet = descriptors.keySet();
+        UUID characteristicsUUID = UUID.fromString(attributeIdentifier);
+        BluetoothGatt gatt = null;
 
-        for (BluetoothGatt gatt : keySet) {
-            BluetoothGattDescriptor desc = descriptors.get(keySet);
+        if(m_connected_devices.size()>0 && descriptorUUID!=null && characteristicsUUID!=null) {
 
-            if (desc == null) {
-                for(DeviceEventListener listener : m_listeners) {
-                    listener.onError(Error.ATTRIBUTE_DESCRIPTOR_NOT_FOUND);
-                }
+            HashMap<BluetoothGatt, BluetoothGattCharacteristic> peripheralAndCharacteristic = Util.characteristicIn(m_connected_devices, characteristicsUUID);
+            Set<BluetoothGatt> keySet = peripheralAndCharacteristic.keySet();
+
+            for (BluetoothGatt bGatt : keySet) {
+                gatt = bGatt;
             }
 
-            gatt.readDescriptor(desc);
+            if (gatt == null) {
+                for(DeviceEventListener listener : m_listeners) {
+                    listener.onError(Error.DEVICE_NOT_FOUND);
+                }
+            } else {
+                BluetoothGattCharacteristic characteristic = peripheralAndCharacteristic.get(gatt);
+
+                if (characteristic == null) {
+                    for(DeviceEventListener listener : m_listeners) {
+                        listener.onError(Error.DEVICE_ATTRIBUTES_NOT_FOUND);
+                    }
+                } else {
+                    List<BluetoothGattDescriptor> descriptors = characteristic.getDescriptors();
+                    ListIterator<BluetoothGattDescriptor> listitr = null;
+                    listitr = descriptors.listIterator();
+                    while (listitr.hasNext()) {
+                        BluetoothGattDescriptor descriptor = listitr.next();
+                        if(descriptor.getUuid().equals(descriptorUUID))
+                        {
+                            if(!gatt.readDescriptor(descriptor)){
+                                Log.e(TAG, "failed to Read the descriptor value.");
+                                for (DeviceEventListener listener : m_listeners) {
+                                    listener.onError(Error.ATTRIBUTE_DESCRIPTOR_READ_FAILED);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
     @Override
     public void writeDeviceAttributeDescriptorValue(String attributeDescriptorIdentifier, byte[] data) {
         UUID descriptorUUID = UUID.fromString(attributeDescriptorIdentifier);
-        HashMap<BluetoothGatt, BluetoothGattDescriptor> descriptors = Util.descriptorIn(m_connected_devices, descriptorUUID);
-        Set<BluetoothGatt> keySet = descriptors.keySet();
+        if(m_connected_devices.size()>0 && descriptorUUID!=null) {
 
-        for (BluetoothGatt gatt : keySet) {
-            BluetoothGattDescriptor desc = descriptors.get(keySet);
+            HashMap<BluetoothGatt, BluetoothGattDescriptor> descriptors = Util.descriptorIn(m_connected_devices, descriptorUUID);
+            Set<BluetoothGatt> keySet = descriptors.keySet();
 
-            if (desc == null) {
-                for(DeviceEventListener listener : m_listeners) {
-                    listener.onError(Error.ATTRIBUTE_DESCRIPTOR_NOT_FOUND);
+            for (BluetoothGatt gatt : keySet) {
+                BluetoothGattDescriptor desc = descriptors.get(gatt);
+
+                if (desc == null) {
+                    for(DeviceEventListener listener : m_listeners) {
+                        listener.onError(Error.ATTRIBUTE_DESCRIPTOR_NOT_FOUND);
+                    }
+                } else {
+                    desc.setValue(data);
+                    if(!gatt.writeDescriptor(desc)){
+                        Log.e(TAG, "failed to Write the value into descriptor.");
+                        for (DeviceEventListener listener : m_listeners) {
+                            listener.onError(Error.ATTRIBUTE_DESCRIPTOR_WRITE_FAILED);
+                        }
+                    }
                 }
             }
-
-            desc.setValue(data);
-            gatt.writeDescriptor(desc);
         }
     }
 
@@ -359,9 +435,9 @@ public class BluetoothLEService extends InterfaceService {
             for(DeviceEventListener listener : m_listeners) {
                 listener.onError(Error.DEVICE_NOT_FOUND);
             }
+        } else {
+            gatt.readRemoteRssi();
         }
-
-        gatt.readRemoteRssi();
     }
 
     private BluetoothGattCallback mGattCallback = new BluetoothGattCallback() {
@@ -369,39 +445,97 @@ public class BluetoothLEService extends InterfaceService {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status,int newState) {
             BluetoothDevice device = gatt.getDevice();
-
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                if(newState == BluetoothProfile.STATE_CONNECTED) {
-                    if (m_connected_devices.contains(gatt)) {
-                        for (int i = 0; i < m_connected_devices.size(); i++) {
-                            if (m_connected_devices.get(i).equals(gatt))
-                                m_connected_devices.set(i, m_connected_devices.get(i));
+            switch (status){
+                case BluetoothGatt.GATT_SUCCESS:
+                    if(newState == BluetoothProfile.STATE_CONNECTED) {
+                        if (m_connected_devices.contains(gatt)) {
+                            for (int i = 0; i < m_connected_devices.size(); i++) {
+                                if (m_connected_devices.get(i).equals(gatt))
+                                    m_connected_devices.set(i, m_connected_devices.get(i));
+                            }
+                        } else {
+                            m_connected_devices.add(gatt);
                         }
-                    } else {
-                        m_connected_devices.add(gatt);
+                        for(DeviceEventListener listener : m_listeners)
+                            listener.onDeviceConnection(device.getName(), device.getAddress());
+                    } else if(newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        // delete connected device from list after disconnect device.
+                        if (m_connected_devices.contains(gatt)) {
+                            for (int i = 0; i < m_connected_devices.size(); i++) {
+                                if (m_connected_devices.get(i).equals(gatt))
+                                    m_connected_devices.remove(i);
+                            }
+                        }
+                        gatt.close();
+                        for(DeviceEventListener listener : m_listeners) {
+                            listener.onDeviceDisconnection(device.getName(), device.getAddress().toUpperCase(Locale.getDefault()));
+                        }
                     }
-                    for(DeviceEventListener listener : m_listeners)
-                        listener.onDeviceConnection(device.getName(), device.getAddress());
-                } else if(newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    // delete connected device from list after disconnect device.
+                    break;
+
+                case BluetoothGatt.GATT_FAILURE:
+                    gatt.disconnect();
+                    gatt.close();
+
+                    for(DeviceEventListener listener : m_listeners) {
+                        listener.onDeviceConnectionFailure(device.getName(), device.getAddress().toUpperCase(Locale.getDefault()), status);
+                    }
+                    break;
+
+                case 133:
+                    gatt.disconnect();
+                    gatt.close();
+
+                    for(DeviceEventListener listener : m_listeners) {
+                        listener.onDeviceConnectionFailure(device.getName(), device.getAddress().toUpperCase(Locale.getDefault()), status);
+                    }
+                    break;
+
+                case 8:
                     if (m_connected_devices.contains(gatt)) {
                         for (int i = 0; i < m_connected_devices.size(); i++) {
                             if (m_connected_devices.get(i).equals(gatt))
                                 m_connected_devices.remove(i);
                         }
                     }
+                    gatt.disconnect();
                     gatt.close();
-                    for(DeviceEventListener listener : m_listeners) {
-                        listener.onDeviceDisconnection(device.getName(), device.getAddress().toUpperCase(Locale.getDefault()));
-                    }
-                }
-            } else if(status == BluetoothGatt.GATT_FAILURE || status == 133){ // Ron: I see status of 133 sometimes.
-                gatt.disconnect();
-                gatt.close();
 
-                for(DeviceEventListener listener : m_listeners) {
-                    listener.onDeviceConnectionFailure(device.getName(), device.getAddress().toUpperCase(Locale.getDefault()), status);
-                }
+                    for(DeviceEventListener listener : m_listeners) {
+                        listener.onDeviceUnexpectedlyDisconnection(device.getName(), device.getAddress().toUpperCase(Locale.getDefault()), status);
+                    }
+                    break;
+
+                case 19:
+                    if (m_connected_devices.contains(gatt)) {
+                        for (int i = 0; i < m_connected_devices.size(); i++) {
+                            if (m_connected_devices.get(i).equals(gatt))
+                                m_connected_devices.remove(i);
+                        }
+                    }
+                    gatt.disconnect();
+                    gatt.close();
+
+                    for(DeviceEventListener listener : m_listeners) {
+                        listener.onDeviceUnexpectedlyDisconnection(device.getName(), device.getAddress().toUpperCase(Locale.getDefault()), status);
+                    }
+                    break;
+
+                default:
+
+                    if (m_connected_devices.contains(gatt)) {
+                        for (int i = 0; i < m_connected_devices.size(); i++) {
+                            if (m_connected_devices.get(i).equals(gatt))
+                                m_connected_devices.remove(i);
+                        }
+                    }
+                    gatt.disconnect();
+                    gatt.close();
+
+                    for(DeviceEventListener listener : m_listeners) {
+                        listener.onDeviceUnexpectedlyDisconnection(device.getName(), device.getAddress().toUpperCase(Locale.getDefault()), status);
+                    }
+                    break;
             }
         }
 
@@ -482,7 +616,7 @@ public class BluetoothLEService extends InterfaceService {
 
     BluetoothLEScanner.LEScanListener m_le_scan_listener = new BluetoothLEScanner.LEScanListener() {
         @Override
-        public void onLeScan(BluetoothDevice device, int rssi, byte[] advertisementData) {
+        public void onLeScan(BluetoothDevice device, int rssi, ScanRecord record, byte[] advertisementData) {
             if (device == null) {
                 return;
             }
@@ -499,13 +633,13 @@ public class BluetoothLEService extends InterfaceService {
             List<String> serviceUUIDs = m_le_scanner.parseAdvertisementData(advertisementData);
 
             for (DeviceEventListener listener : m_listeners) {
-                listener.onDeviceFound(device.getAddress().toUpperCase(Locale.getDefault()), device.getName(), rssi, serviceUUIDs, advertisementData);
+                listener.onDeviceFound(device.getAddress().toUpperCase(Locale.getDefault()), device.getName(), rssi, serviceUUIDs, record, advertisementData);
             }
         }
 
     };
 
-    private void bluetoothAdapterState() {
+    public void getBluetoothAdapterState() {
 
         m_bluetooth_adapter = BluetoothAdapter.getDefaultAdapter();
 

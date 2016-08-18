@@ -125,7 +125,7 @@ public final class BluetoothLEScannerForLollipop extends BluetoothLEScanner {
 
 
 
-                    mListener.onLeScan(result.getDevice(), result.getRssi(), scanRed);
+                    mListener.onLeScan(result.getDevice(), result.getRssi(), record, scanRed);
             }
         }
 
